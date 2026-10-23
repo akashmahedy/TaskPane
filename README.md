@@ -2,6 +2,8 @@
 
 A native macOS taskbar and menu bar companion, created by **akashmahedy**.
 
+The main product priority is Lawand Taskbar-style window behavior and customization. System monitoring is an optional companion module. See [the taskbar-first priorities](docs/ROADMAP.md).
+
 **0.1.0 — private alpha.** This is an early working build, not a complete replacement for every feature in the roadmap. Free and open source under GPL-3.0-or-later. No account, paid unlock, ads, analytics, or cloud monitoring.
 
 ## In this alpha
