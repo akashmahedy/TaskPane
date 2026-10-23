@@ -13,7 +13,7 @@ Swift 6 / Swift 5 language mode, macOS 14 deployment target. Local runtime targe
 - Native GUI: live CPU/RAM/network dashboard, five distinct illustrated presets, Windows-style full-width taskbar, exact custom item width, light/system themes, section ordering, automatic/manual controls, launcher search, pin/unpin, creator credit and preference export/import.
 - Extended backup test: exported a 168-point item width, changed it to 180, imported the backup and verified the saved preferences exactly matched the exported snapshot.
 - Without Accessibility, the final bar displayed one application button per running application. Its actual full-width layout was visually inspected.
-- Earlier native diagnostics on this Mac passed CPU/RAM sanity checks and detected two displays. That result preceded the window-inventory redesign and does not validate the final window count.
+- The final seven-second native diagnostic passed CPU/RAM sanity checks and returned network/battery readings, two displays and 14 verified AX windows. This diagnostic process has its own launch/permission context; it does not establish that the interactive GUI has window-control access.
 - Open Code Review delegation covered all 21 selected files, with no skipped reviewable files. Tests and excluded metadata/docs received additional manual review. See [REVIEW.md](REVIEW.md).
 
 ## Pending native window-control verification

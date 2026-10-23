@@ -28,6 +28,7 @@ The initial source submission contains 29 files: 21 OCR-reviewable and 8 exclude
 - Auto-hide tracks each display independently. Adaptive item width uses the number of rendered groups and their label setting.
 - Preset previews derive their width and position from preset preferences; Focus does not display disabled widgets.
 - Added descriptive labels to numeric and opacity sliders. Clamped color channels before producing RGB hex values.
+- Corrected Bash 3.2 handling of an empty optional flag array after the first GitHub CI run exposed it. The test script now uses one nonempty argument array.
 - Bundle updates replace the executable by rename. CI uses read-only repository permissions, bounded execution and concurrency cancellation.
 
 Resolved findings were re-read and relevant tests/builds rerun. Native validation and remaining platform limits are recorded in [VALIDATION.md](VALIDATION.md). This review is not a guarantee that every third-party app or macOS version behaves identically.
