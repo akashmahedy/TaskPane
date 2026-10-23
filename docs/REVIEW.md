@@ -31,4 +31,15 @@ The initial source submission contains 29 files: 21 OCR-reviewable and 8 exclude
 - Corrected Bash 3.2 handling of an empty optional flag array after the first GitHub CI run exposed it. The test script now uses one nonempty argument array.
 - Bundle updates replace the executable by rename. CI uses read-only repository permissions, bounded execution and concurrency cancellation.
 
+## Native window-test follow-up
+
+Native testing exposed a misleading activation error and a restore raise timeout. The follow-up selected one modified file (`WindowService.swift`) through OCR delegation; that file was reviewed in full, with none skipped (1/1, 100%).
+
+- Activation reporting checks whether the requested owner is already foreground before treating a redundant activation request as a failure.
+- Window-list membership is collected separately from metadata time budgets. Cached presentation requires fresh exact membership and expires after 12 seconds without a new full snapshot; closed members are pruned.
+- Metadata inspection advances across both applications and their individual windows, avoiding persistent starvation when budgets are exhausted.
+- Window actions use a bounded one-second IPC timeout. A restored window permits one non-destructive raise retry after exact membership, owner and trust are checked again. Close is never retried.
+- Successful minimize/restore updates the cached state of the exact selected window. Unknown minimized state is not assumed to be false.
+- Permission guidance includes the macOS 27 label and clears its stale instruction after access connects.
+
 Resolved findings were re-read and relevant tests/builds rerun. Native validation and remaining platform limits are recorded in [VALIDATION.md](VALIDATION.md). This review is not a guarantee that every third-party app or macOS version behaves identically.

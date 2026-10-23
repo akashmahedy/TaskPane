@@ -49,6 +49,8 @@ Window rows come from public Accessibility window lists, with duplicate AX eleme
 
 Apps with incomplete Accessibility support, slow AX responses, nonstandard windows and some full-screen/other-Space windows may be omitted or refuse actions. Visibility is best effort. Minimized windows can be shown; off-screen windows and dialogs are hidden by default. TaskPane does not extract browser tabs as separate windows.
 
+Under load, previously verified row details can be reused for up to 12 seconds, provided the exact window is still in a freshly retrieved AX window list. A complete list that no longer contains the window removes it. Every window action performs its own fresh verification.
+
 ## Preferences and backups
 
 Preferences are stored in `~/Library/Application Support/TaskPane/preferences.json`. **Backup → Export preferences** writes a portable JSON file. **Import preferences** validates the complete file, asks before replacing a valid setup, and persists it before updating the UI. Invalid files leave the current setup unchanged. An unreadable original settings file is retained; an explicit valid import preserves a separate copy before restoring it.

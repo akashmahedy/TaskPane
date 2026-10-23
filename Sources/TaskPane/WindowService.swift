@@ -60,6 +60,7 @@ final class WindowService: ObservableObject {
     private var refreshRequested = false
     private var stopped = false
     private var lifecycle = UUID()
+    private let permissionGuide = "Enable TaskPane in System Settings → Privacy & Security → Accessibility (Device Control and Data Access on macOS 27)."
 
     init() {
         accessibilityGranted = AXIsProcessTrusted()
@@ -113,7 +114,11 @@ final class WindowService: ObservableObject {
 
     func refresh() {
         guard !stopped else { return }
+        let wasGranted = accessibilityGranted
         accessibilityGranted = AXIsProcessTrusted()
+        if !wasGranted, accessibilityGranted, lastActionMessage == permissionGuide {
+            lastActionMessage = nil
+        }
         if refreshInProgress {
             refreshRequested = true
             return
@@ -168,7 +173,7 @@ final class WindowService: ObservableObject {
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         accessibilityGranted = AXIsProcessTrustedWithOptions(options)
-        lastActionMessage = accessibilityGranted ? "Accessibility access is enabled." : "Enable TaskPane in System Settings → Privacy & Security → Accessibility."
+        lastActionMessage = accessibilityGranted ? "Accessibility access is enabled." : permissionGuide
         refresh()
     }
 
@@ -210,7 +215,15 @@ final class WindowService: ObservableObject {
             refresh()
             return
         }
-        lastActionMessage = application.activate(options: []) ? nil : "macOS could not activate this application."
+        // Raising the verified AX window can already put its owner in front.
+        // Report the achieved state even when a redundant activation returns false.
+        if application.isActive || NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+            lastActionMessage = nil
+            return
+        }
+        let activated = application.activate(options: [])
+        let isFrontmost = application.isActive || NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        lastActionMessage = activated || isFrontmost ? nil : "macOS could not activate this application."
     }
 
     private func validApplication(pid: Int32) -> NSRunningApplication? {
@@ -295,6 +308,8 @@ private final class WindowInspector: @unchecked Sendable {
     private struct RetainedWindow {
         let pid: Int32
         let element: AXUIElement
+        let snapshot: WindowSnapshot
+        let sampledAt: TimeInterval
     }
 
     private struct ApplicationInventory {
@@ -307,6 +322,16 @@ private final class WindowInspector: @unchecked Sendable {
         let bounds: CGRect
         let minimized: Bool
         let isDialog: Bool
+
+        func settingMinimized(_ minimized: Bool) -> WindowSnapshot {
+            WindowSnapshot(title: title, bounds: bounds, minimized: minimized, isDialog: isDialog)
+        }
+    }
+
+    private enum SnapshotRead {
+        case verified(WindowSnapshot)
+        case unavailable
+        case ineligible
     }
 
     private struct VisibilityHint {
@@ -317,7 +342,11 @@ private final class WindowInspector: @unchecked Sendable {
 
     private var retained: [UInt32: RetainedWindow] = [:]
     private var nextToken: UInt32 = 1
+    private var inspectionStartIndex = 0
+    private var windowInspectionOffsets: [Int32: Int] = [:]
     private let maximumWindowsPerApplication = 256
+    private let maximumCachedSnapshotAge: TimeInterval = 12
+    private let actionTimeout: Float = 1
 
     func enumerate(apps: [RunningAppEntry], trusted: Bool, frontmostPID: Int32?) -> [WindowEntry] {
         guard trusted, AXIsProcessTrusted() else {
@@ -326,27 +355,64 @@ private final class WindowInspector: @unchecked Sendable {
         }
         let runningPIDs = Set(apps.map(\.pid))
         retained = retained.filter { runningPIDs.contains($0.value.pid) }
+        windowInspectionOffsets = windowInspectionOffsets.filter { runningPIDs.contains($0.key) }
         let hints = Dictionary(grouping: visibilityHints(), by: \.pid)
-        let deadline = ProcessInfo.processInfo.systemUptime + 2
-        var entries: [WindowEntry] = []
-
-        for app in apps {
-            guard ProcessInfo.processInfo.systemUptime < deadline else { break }
-            // One slow Accessibility server must not consume the entire sweep.
-            let appDeadline = min(deadline, ProcessInfo.processInfo.systemUptime + 0.4)
-            guard let inventory = applicationWindows(pid: app.pid, deadline: appDeadline) else { continue }
-            // A successfully retrieved list can retire closed elements. Failed or
-            // timed-out lists never justify assigning a stale token to a new window.
+        // Membership is independent of the metadata budget. A slow early app
+        // must not make later apps disappear merely because the sweep ended.
+        let start = apps.isEmpty ? 0 : inspectionStartIndex % apps.count
+        let orderedApps = Array(apps.dropFirst(start)) + Array(apps.prefix(start))
+        inspectionStartIndex = apps.isEmpty ? 0 : (start + 1) % apps.count
+        var inventories: [(RunningAppEntry, ApplicationInventory)] = []
+        for app in orderedApps {
+            guard let inventory = applicationWindows(pid: app.pid, timeout: 0.25) else { continue }
             retained = retained.filter { _, record in
                 record.pid != app.pid || inventory.elements.contains { CFEqual($0, record.element) }
             }
+            inventories.append((app, inventory))
+        }
+
+        let metadataDeadline = ProcessInfo.processInfo.systemUptime + 2
+        var nextInspectionPID: Int32?
+        var entries: [WindowEntry] = []
+
+        for (app, inventory) in inventories {
+            if nextInspectionPID == nil, ProcessInfo.processInfo.systemUptime >= metadataDeadline {
+                nextInspectionPID = app.pid
+            }
+            // One slow Accessibility server must not consume the entire sweep.
+            let appDeadline = min(metadataDeadline, ProcessInfo.processInfo.systemUptime + 0.4)
             let focused = app.pid == frontmostPID
                 ? elementAttribute(inventory.application, kAXFocusedWindowAttribute, timeout: 0.05) : nil
-            for element in inventory.elements {
-                guard ProcessInfo.processInfo.systemUptime < appDeadline else { break }
-                guard let snapshot = snapshot(of: element, timeout: 0.1),
-                      owner(of: element) == app.pid,
-                      let token = token(for: element, pid: app.pid) else { continue }
+            let windowCount = inventory.elements.count
+            let windowStart = windowCount == 0 ? 0 : (windowInspectionOffsets[app.pid] ?? 0) % windowCount
+            let orderedElements = Array(inventory.elements.dropFirst(windowStart)) + Array(inventory.elements.prefix(windowStart))
+            for (offset, element) in orderedElements.enumerated() {
+                guard owner(of: element) == app.pid else { continue }
+                let previous = retained.first { $0.value.pid == app.pid && CFEqual($0.value.element, element) }
+                let hasMetadataBudget = ProcessInfo.processInfo.systemUptime < appDeadline
+                let read = hasMetadataBudget ? readSnapshot(of: element, timeout: 0.15) : .unavailable
+                if hasMetadataBudget {
+                    windowInspectionOffsets[app.pid] = (windowStart + offset + 1) % windowCount
+                }
+                let snapshot: WindowSnapshot
+                let sampledAt: TimeInterval
+                switch read {
+                case .verified(let fresh):
+                    snapshot = fresh
+                    sampledAt = ProcessInfo.processInfo.systemUptime
+                case .unavailable:
+                    // Cached presentation is allowed only for this exact member
+                    // of a successfully fetched, current AXWindows list. Reuse
+                    // never extends its age, and no failed list emits old rows.
+                    guard let previous,
+                          ProcessInfo.processInfo.systemUptime - previous.value.sampledAt <= maximumCachedSnapshotAge else { continue }
+                    snapshot = previous.value.snapshot
+                    sampledAt = previous.value.sampledAt
+                case .ineligible:
+                    if let previous { retained.removeValue(forKey: previous.key) }
+                    continue
+                }
+                guard let token = token(for: element, pid: app.pid, snapshot: snapshot, sampledAt: sampledAt) else { continue }
                 let isFocused = focused.map { CFEqual($0, element) } == true && app.pid == frontmostPID
                 let onScreen = !snapshot.minimized && (isFocused || (hints[app.pid] ?? []).contains {
                     Self.sameFrame($0.bounds, snapshot.bounds) && Self.compatibleTitles($0.title, snapshot.title)
@@ -358,6 +424,9 @@ private final class WindowInspector: @unchecked Sendable {
                     isOnScreen: onScreen, isDialog: snapshot.isDialog, isFocused: isFocused
                 ))
             }
+        }
+        if let nextInspectionPID, let index = apps.firstIndex(where: { $0.pid == nextInspectionPID }) {
+            inspectionStartIndex = index
         }
         return entries.sorted {
             let appComparison = $0.appName.localizedStandardCompare($1.appName)
@@ -375,8 +444,7 @@ private final class WindowInspector: @unchecked Sendable {
         guard let record = retained[entry.id], record.pid == entry.pid else {
             return .failure("This window is no longer in the verified list. Refresh and try again.")
         }
-        let deadline = ProcessInfo.processInfo.systemUptime + 1
-        guard let inventory = applicationWindows(pid: entry.pid, deadline: deadline) else {
+        guard let inventory = applicationWindows(pid: entry.pid, timeout: actionTimeout) else {
             return .failure("This application did not provide a complete window list. No action was sent; try again.")
         }
         // Exact AX object membership is the action identity. Never substitute a
@@ -385,14 +453,15 @@ private final class WindowInspector: @unchecked Sendable {
             retained.removeValue(forKey: entry.id)
             return .failure("The selected window has closed or is unavailable. No action was sent.")
         }
-        guard let current = snapshot(of: record.element, timeout: 0.12),
+        guard let current = snapshot(of: record.element, timeout: actionTimeout),
               owner(of: record.element) == entry.pid else {
             return .failure("The selected window could not be verified. No action was sent.")
         }
+        cache(current, for: entry.id, record: record)
 
         let action: Action
         if case .click(let secondClickMinimizes) = requestedAction {
-            let focus = focusState(of: inventory.application)
+            let focus = focusState(of: inventory.application, timeout: actionTimeout)
             if secondClickMinimizes, !current.minimized, focus.frontmost,
                let focused = focus.element, CFEqual(focused, record.element) {
                 action = .minimize
@@ -405,16 +474,29 @@ private final class WindowInspector: @unchecked Sendable {
         guard workState.isActive, AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
             return .failure("Window access changed. No action was sent.")
         }
-        AXUIElementSetMessagingTimeout(record.element, 0.15)
+        AXUIElementSetMessagingTimeout(record.element, actionTimeout)
         switch action {
         case .activate:
             if current.minimized {
                 let restored = AXUIElementSetAttributeValue(record.element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-                guard restored == .success else {
+                guard restored == .success || booleanAttribute(record.element, kAXMinimizedAttribute, timeout: actionTimeout) == false else {
                     return .failure("macOS could not restore this window (Accessibility error \(restored.rawValue)).")
                 }
+                cache(current.settingMinimized(false), for: entry.id, record: record)
             }
-            let raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
+            var raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
+            if current.minimized, raised == .cannotComplete {
+                // Restore animation can outlast the first raise. This retry is
+                // non-destructive, bounded, and revalidates exact membership.
+                Thread.sleep(forTimeInterval: 0.12)
+                guard workState.isActive, AXIsProcessTrusted(), owner(of: record.element) == entry.pid,
+                      let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+                      fresh.elements.contains(where: { CFEqual($0, record.element) }) else {
+                    return .failure("The restored window is no longer available. No further action was sent.")
+                }
+                AXUIElementSetMessagingTimeout(record.element, actionTimeout)
+                raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
+            }
             return raised == .success ? .raised : .failure("macOS could not raise this window (Accessibility error \(raised.rawValue)).")
         case .minimize:
             var settable: DarwinBoolean = false
@@ -423,13 +505,17 @@ private final class WindowInspector: @unchecked Sendable {
                 return .failure("This application does not allow this window to be minimized.")
             }
             let result = AXUIElementSetAttributeValue(record.element, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-            return result == .success ? .success : .failure("macOS could not minimize this window (Accessibility error \(result.rawValue)).")
+            if result == .success || booleanAttribute(record.element, kAXMinimizedAttribute, timeout: actionTimeout) == true {
+                cache(current.settingMinimized(true), for: entry.id, record: record)
+                return .success
+            }
+            return .failure("macOS could not minimize this window (Accessibility error \(result.rawValue)).")
         case .close:
-            guard let button = elementAttribute(record.element, kAXCloseButtonAttribute, timeout: 0.12),
+            guard let button = elementAttribute(record.element, kAXCloseButtonAttribute, timeout: actionTimeout),
                   owner(of: button) == entry.pid else {
                 return .failure("This window does not expose a verified close button. No close action was sent.")
             }
-            AXUIElementSetMessagingTimeout(button, 0.15)
+            AXUIElementSetMessagingTimeout(button, actionTimeout)
             let result = AXUIElementPerformAction(button, kAXPressAction as CFString)
             return result == .success ? .success : .failure("macOS could not close this window (Accessibility error \(result.rawValue)).")
         case .click:
@@ -437,22 +523,27 @@ private final class WindowInspector: @unchecked Sendable {
         }
     }
 
-    private func token(for element: AXUIElement, pid: Int32) -> UInt32? {
+    private func cache(_ snapshot: WindowSnapshot, for token: UInt32, record: RetainedWindow) {
+        retained[token] = RetainedWindow(pid: record.pid, element: record.element,
+                                         snapshot: snapshot, sampledAt: ProcessInfo.processInfo.systemUptime)
+    }
+
+    private func token(for element: AXUIElement, pid: Int32, snapshot: WindowSnapshot, sampledAt: TimeInterval) -> UInt32? {
         if let existing = retained.first(where: { $0.value.pid == pid && CFEqual($0.value.element, element) }) {
+            retained[existing.key] = RetainedWindow(pid: pid, element: element, snapshot: snapshot, sampledAt: sampledAt)
             return existing.key
         }
         // Tokens are never recycled during this process, including after a close.
         guard nextToken != 0 else { return nil }
         let token = nextToken
         nextToken &+= 1
-        retained[token] = RetainedWindow(pid: pid, element: element)
+        retained[token] = RetainedWindow(pid: pid, element: element, snapshot: snapshot, sampledAt: sampledAt)
         return token
     }
 
-    private func applicationWindows(pid: Int32, deadline: TimeInterval) -> ApplicationInventory? {
-        guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+    private func applicationWindows(pid: Int32, timeout: Float) -> ApplicationInventory? {
         let application = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(application, 0.15)
+        AXUIElementSetMessagingTimeout(application, timeout)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
               let value, CFGetTypeID(value) == CFArrayGetTypeID(),
@@ -463,11 +554,15 @@ private final class WindowInspector: @unchecked Sendable {
             let element = unsafeBitCast(value, to: AXUIElement.self)
             if !elements.contains(where: { CFEqual($0, element) }) { elements.append(element) }
         }
-        guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
         return ApplicationInventory(application: application, elements: elements)
     }
 
     private func snapshot(of element: AXUIElement, timeout: Float) -> WindowSnapshot? {
+        if case .verified(let snapshot) = readSnapshot(of: element, timeout: timeout) { return snapshot }
+        return nil
+    }
+
+    private func readSnapshot(of element: AXUIElement, timeout: Float) -> SnapshotRead {
         AXUIElementSetMessagingTimeout(element, timeout)
         let attributes = [
             kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute,
@@ -475,22 +570,23 @@ private final class WindowInspector: @unchecked Sendable {
         ] as CFArray
         var values: CFArray?
         guard AXUIElementCopyMultipleAttributeValues(element, attributes, [], &values) == .success,
-              let values = values as? [AnyObject], values.count == 6,
-              values[0] as? String == kAXWindowRole,
-              let subrole = values[1] as? String,
-              let position = Self.point(from: values[3]), let size = Self.size(from: values[4]),
-              position.x.isFinite, position.y.isFinite,
-              size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return nil }
+              let values = values as? [AnyObject], values.count == 6 else { return .unavailable }
+        guard let role = values[0] as? String, let subrole = values[1] as? String else { return .unavailable }
         let dialog = subrole == "AXDialog" || subrole == "AXSystemDialog"
-        guard subrole == kAXStandardWindowSubrole || dialog else { return nil }
-        return WindowSnapshot(
+        guard role == kAXWindowRole, subrole == kAXStandardWindowSubrole || dialog else { return .ineligible }
+        guard
+              let position = Self.point(from: values[3]), let size = Self.size(from: values[4]),
+              let minimized = (values[5] as? NSNumber)?.boolValue,
+              position.x.isFinite, position.y.isFinite,
+              size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return .unavailable }
+        return .verified(WindowSnapshot(
             title: Self.nonempty(values[2] as? String), bounds: CGRect(origin: position, size: size),
-            minimized: (values[5] as? NSNumber)?.boolValue ?? false, isDialog: dialog
-        )
+            minimized: minimized, isDialog: dialog
+        ))
     }
 
-    private func focusState(of application: AXUIElement) -> (frontmost: Bool, element: AXUIElement?) {
-        AXUIElementSetMessagingTimeout(application, 0.08)
+    private func focusState(of application: AXUIElement, timeout: Float) -> (frontmost: Bool, element: AXUIElement?) {
+        AXUIElementSetMessagingTimeout(application, timeout)
         let attributes = [kAXFrontmostAttribute, kAXFocusedWindowAttribute] as CFArray
         var values: CFArray?
         guard AXUIElementCopyMultipleAttributeValues(application, attributes, [], &values) == .success,
@@ -498,6 +594,13 @@ private final class WindowInspector: @unchecked Sendable {
         let focused = CFGetTypeID(values[1]) == AXUIElementGetTypeID()
             ? unsafeBitCast(values[1], to: AXUIElement.self) : nil
         return ((values[0] as? NSNumber)?.boolValue ?? false, focused)
+    }
+
+    private func booleanAttribute(_ element: AXUIElement, _ attribute: String, timeout: Float) -> Bool? {
+        AXUIElementSetMessagingTimeout(element, timeout)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return (value as? NSNumber)?.boolValue
     }
 
     private func elementAttribute(_ element: AXUIElement, _ attribute: String, timeout: Float) -> AXUIElement? {
