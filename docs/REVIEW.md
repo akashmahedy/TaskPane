@@ -42,4 +42,13 @@ Native testing exposed a misleading activation error and a restore raise timeout
 - Successful minimize/restore updates the cached state of the exact selected window. Unknown minimized state is not assumed to be false.
 - Permission guidance includes the macOS 27 label and clears its stale instruction after access connects.
 
+## Foreground-focus follow-up
+
+Standalone GUI testing with two disposable windows confirmed separate rows, minimize/restore continuity and closing only the selected window. It also showed that raising the selected window did not reliably give its application keyboard focus. A second one-file OCR delegation pass selected `WindowService.swift`; the complete diff was reviewed (1/1, none skipped).
+
+- Active TaskPane windows yield activation through the macOS 14+ cooperative API. A Boolean request result is never treated as proof of focus.
+- For an authorized individual-window action, the serial AX worker rechecks exact membership, owner and trust before requesting the target-supported public `AXFrontmost` attribute. It raises the same retained element again after activation.
+- A bounded readback requires both application frontmost state and an exact `AXFocusedWindow` match. The main thread also confirms the foreground process before reporting success.
+- New TaskPane actions cancel stale activation work and delayed status updates. A foreground change to an unrelated application also cancels the pending activation. Explicit queued minimize/close commands retain their separate identity checks and are not dropped by a later command. Close is still sent only once.
+
 Resolved findings were re-read and relevant tests/builds rerun. Native validation and remaining platform limits are recorded in [VALIDATION.md](VALIDATION.md). This review is not a guarantee that every third-party app or macOS version behaves identically.

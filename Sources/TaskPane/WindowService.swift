@@ -60,6 +60,8 @@ final class WindowService: ObservableObject {
     private var refreshRequested = false
     private var stopped = false
     private var lifecycle = UUID()
+    private var actionID: UUID?
+    private var pendingActivation: (request: UUID, originalPID: Int32?, targetPID: Int32)?
     private let permissionGuide = "Enable TaskPane in System Settings → Privacy & Security → Accessibility (Device Control and Data Access on macOS 27)."
 
     init() {
@@ -77,7 +79,12 @@ final class WindowService: ObservableObject {
         ]
         for event in workspaceEvents {
             let token = workspaceCenter.addObserver(forName: event, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.refresh() }
+                Task { @MainActor [weak self] in
+                    if event == NSWorkspace.didActivateApplicationNotification {
+                        self?.cancelActivationIfForegroundChanged()
+                    }
+                    self?.refresh()
+                }
             }
             observers.append((workspaceCenter, token))
         }
@@ -104,6 +111,8 @@ final class WindowService: ObservableObject {
 
     func stop() {
         stopped = true
+        pendingActivation = nil
+        actionID = nil
         workState.stop()
         lifecycle = UUID()
         timer?.invalidate()
@@ -181,10 +190,9 @@ final class WindowService: ObservableObject {
         guard !stopped else { return }
         accessibilityGranted = AXIsProcessTrusted()
         guard accessibilityGranted else {
-            activateApp(pid: entry.pid)
-            if lastActionMessage == nil {
-                lastActionMessage = "Activated \(entry.appName). Enable Accessibility to select an individual window."
-            }
+            let request = beginAction(activationTargetPID: entry.pid)
+            requestActivation(pid: entry.pid, entry: nil, request: request,
+                              successMessage: "Activated \(entry.appName). Enable Accessibility to select an individual window.")
             return
         }
         perform(.activate, entry: entry)
@@ -210,20 +218,95 @@ final class WindowService: ObservableObject {
 
     func activateApp(pid: Int32) {
         guard !stopped else { return }
+        requestActivation(pid: pid, entry: nil, request: beginAction(activationTargetPID: pid))
+    }
+
+    private func beginAction(activationTargetPID: Int32? = nil) -> UUID {
+        let request = UUID()
+        actionID = request
+        pendingActivation = activationTargetPID.map {
+            (request: request, originalPID: NSWorkspace.shared.frontmostApplication?.processIdentifier, targetPID: $0)
+        }
+        workState.beginAction(request)
+        lastActionMessage = nil
+        return request
+    }
+
+    private func isCurrentAction(_ request: UUID) -> Bool {
+        !stopped && actionID == request
+    }
+
+    private func cancelActivationIfForegroundChanged() {
+        guard let pending = pendingActivation, isCurrentAction(pending.request),
+              let foregroundPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              foregroundPID != pending.originalPID, foregroundPID != pending.targetPID else { return }
+        pendingActivation = nil
+        actionID = nil
+        workState.cancelAction(pending.request)
+        lastActionMessage = "Activation cancelled because another application became active."
+    }
+
+    private func completeAction(_ request: UUID) {
+        if pendingActivation?.request == request { pendingActivation = nil }
+    }
+
+    private func requestActivation(pid: Int32, entry: WindowEntry?, request: UUID, successMessage: String? = nil) {
+        // Read current state rather than a possibly delayed notification payload.
+        cancelActivationIfForegroundChanged()
+        guard isCurrentAction(request) else { return }
         guard let application = validApplication(pid: pid) else {
+            completeAction(request)
             lastActionMessage = "This application has closed."
             refresh()
             return
         }
-        // Raising the verified AX window can already put its owner in front.
-        // Report the achieved state even when a redundant activation returns false.
-        if application.isActive || NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
-            lastActionMessage = nil
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+            if NSApp.isActive {
+                NSApp.yieldActivation(to: application)
+                _ = application.activate(from: NSRunningApplication.current, options: [])
+            } else {
+                _ = application.activate(options: [])
+            }
+        }
+        // AppKit's Boolean is request acceptance, not proof of foreground focus.
+        guard let entry else {
+            verifyForeground(pid: pid, request: request,
+                             deadline: ProcessInfo.processInfo.systemUptime + 1, successMessage: successMessage)
             return
         }
-        let activated = application.activate(options: [])
-        let isFrontmost = application.isActive || NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-        lastActionMessage = activated || isFrontmost ? nil : "macOS could not activate this application."
+        let inspector = inspector
+        let workState = workState
+        worker.async { [weak self] in
+            guard workState.isCurrent(request) else { return }
+            let result = inspector.finishActivation(entry: entry, workState: workState, request: request)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isCurrentAction(request) else { return }
+                if let message = result.message {
+                    self.completeAction(request)
+                    self.lastActionMessage = message
+                    self.refresh()
+                } else {
+                    self.verifyForeground(pid: pid, request: request, deadline: result.deadline, successMessage: successMessage)
+                }
+            }
+        }
+    }
+
+    private func verifyForeground(pid: Int32, request: UUID, deadline: TimeInterval, successMessage: String?) {
+        guard isCurrentAction(request) else { return }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+            completeAction(request)
+            lastActionMessage = successMessage
+            refresh()
+        } else if ProcessInfo.processInfo.systemUptime >= deadline {
+            completeAction(request)
+            lastActionMessage = "macOS did not give this application foreground focus. Try Activate again."
+            refresh()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.verifyForeground(pid: pid, request: request, deadline: deadline, successMessage: successMessage)
+            }
+        }
     }
 
     private func validApplication(pid: Int32) -> NSRunningApplication? {
@@ -236,12 +319,20 @@ final class WindowService: ObservableObject {
 
     private func perform(_ action: WindowInspector.Action, entry: WindowEntry) {
         guard !stopped else { return }
+        let targetPID: Int32?
+        switch action {
+        case .activate, .click: targetPID = entry.pid
+        case .minimize, .close: targetPID = nil
+        }
+        let request = beginAction(activationTargetPID: targetPID)
         accessibilityGranted = AXIsProcessTrusted()
         guard accessibilityGranted else {
+            completeAction(request)
             lastActionMessage = "Enable Accessibility to control an individual window."
             return
         }
         guard validApplication(pid: entry.pid) != nil else {
+            completeAction(request)
             lastActionMessage = "This application has closed."
             refresh()
             return
@@ -251,14 +342,15 @@ final class WindowService: ObservableObject {
         let workState = workState
         worker.async { [weak self] in
             guard workState.isActive else { return }
-            let outcome = inspector.perform(action, entry: entry, workState: workState)
+            let outcome = inspector.perform(action, entry: entry, workState: workState, request: request)
             DispatchQueue.main.async { [weak self] in
-                guard let self, !self.stopped, self.lifecycle == currentLifecycle else { return }
+                guard let self, self.isCurrentAction(request), self.lifecycle == currentLifecycle else { return }
                 if outcome.activateOwner {
                     // The selected retained element has already been resolved and
                     // raised. Only then ask macOS to activate its owning process.
-                    self.activateApp(pid: entry.pid)
+                    self.requestActivation(pid: entry.pid, entry: entry, request: request)
                 } else {
+                    self.completeAction(request)
                     self.lastActionMessage = outcome.message
                 }
                 self.refresh()
@@ -272,11 +364,30 @@ final class WindowService: ObservableObject {
 private final class WindowWorkState: @unchecked Sendable {
     private let lock = NSLock()
     private var active = true
+    private var actionID: UUID?
 
     var isActive: Bool {
         lock.lock()
         defer { lock.unlock() }
         return active
+    }
+
+    func beginAction(_ request: UUID) {
+        lock.lock()
+        actionID = request
+        lock.unlock()
+    }
+
+    func isCurrent(_ request: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return active && actionID == request
+    }
+
+    func cancelAction(_ request: UUID) {
+        lock.lock()
+        if actionID == request { actionID = nil }
+        lock.unlock()
     }
 
     func stop() {
@@ -303,6 +414,11 @@ private final class WindowInspector: @unchecked Sendable {
         }
         static let success = Outcome(message: nil, activateOwner: false)
         static let raised = Outcome(message: nil, activateOwner: true)
+    }
+
+    struct ActivationVerification {
+        let message: String?
+        let deadline: TimeInterval
     }
 
     private struct RetainedWindow {
@@ -436,8 +552,18 @@ private final class WindowInspector: @unchecked Sendable {
         }
     }
 
-    func perform(_ requestedAction: Action, entry: WindowEntry, workState: WindowWorkState) -> Outcome {
-        guard workState.isActive else { return .failure("Window inspection stopped.") }
+    func perform(_ requestedAction: Action, entry: WindowEntry, workState: WindowWorkState, request: UUID) -> Outcome {
+        // Explicit minimize/close commands remain queued commands. Newer user
+        // intent cancels only older activation work and all older status output.
+        let needsLatestIntent: Bool
+        switch requestedAction {
+        case .activate, .click: needsLatestIntent = true
+        case .minimize, .close: needsLatestIntent = false
+        }
+        func actionIsCurrent() -> Bool {
+            workState.isActive && (!needsLatestIntent || workState.isCurrent(request))
+        }
+        guard actionIsCurrent() else { return .failure("Window action cancelled.") }
         guard AXIsProcessTrusted() else {
             return .failure("Accessibility access was removed. Enable it to control windows.")
         }
@@ -471,7 +597,7 @@ private final class WindowInspector: @unchecked Sendable {
         } else {
             action = requestedAction
         }
-        guard workState.isActive, AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
+        guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
             return .failure("Window access changed. No action was sent.")
         }
         AXUIElementSetMessagingTimeout(record.element, actionTimeout)
@@ -484,17 +610,21 @@ private final class WindowInspector: @unchecked Sendable {
                 }
                 cache(current.settingMinimized(false), for: entry.id, record: record)
             }
+            guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
+                return .failure("Window action cancelled.")
+            }
             var raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
             if current.minimized, raised == .cannotComplete {
                 // Restore animation can outlast the first raise. This retry is
                 // non-destructive, bounded, and revalidates exact membership.
                 Thread.sleep(forTimeInterval: 0.12)
-                guard workState.isActive, AXIsProcessTrusted(), owner(of: record.element) == entry.pid,
+                guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid,
                       let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
                       fresh.elements.contains(where: { CFEqual($0, record.element) }) else {
                     return .failure("The restored window is no longer available. No further action was sent.")
                 }
                 AXUIElementSetMessagingTimeout(record.element, actionTimeout)
+                guard actionIsCurrent() else { return .failure("Window action cancelled.") }
                 raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
             }
             return raised == .success ? .raised : .failure("macOS could not raise this window (Accessibility error \(raised.rawValue)).")
@@ -503,6 +633,9 @@ private final class WindowInspector: @unchecked Sendable {
             guard AXUIElementIsAttributeSettable(record.element, kAXMinimizedAttribute as CFString, &settable) == .success,
                   settable.boolValue else {
                 return .failure("This application does not allow this window to be minimized.")
+            }
+            guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
+                return .failure("Window action cancelled.")
             }
             let result = AXUIElementSetAttributeValue(record.element, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
             if result == .success || booleanAttribute(record.element, kAXMinimizedAttribute, timeout: actionTimeout) == true {
@@ -516,11 +649,83 @@ private final class WindowInspector: @unchecked Sendable {
                 return .failure("This window does not expose a verified close button. No close action was sent.")
             }
             AXUIElementSetMessagingTimeout(button, actionTimeout)
+            guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
+                return .failure("Window action cancelled.")
+            }
             let result = AXUIElementPerformAction(button, kAXPressAction as CFString)
             return result == .success ? .success : .failure("macOS could not close this window (Accessibility error \(result.rawValue)).")
         case .click:
             return .failure("The window action could not be resolved.")
         }
+    }
+
+    func finishActivation(entry: WindowEntry, workState: WindowWorkState, request: UUID) -> ActivationVerification {
+        func failure(_ message: String) -> ActivationVerification {
+            ActivationVerification(message: message, deadline: ProcessInfo.processInfo.systemUptime)
+        }
+        func isCurrent() -> Bool { workState.isCurrent(request) && AXIsProcessTrusted() }
+        guard isCurrent(), let record = retained[entry.id], record.pid == entry.pid,
+              let inventory = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+              inventory.elements.contains(where: { CFEqual($0, record.element) }),
+              owner(of: record.element) == entry.pid,
+              snapshot(of: record.element, timeout: actionTimeout) != nil else {
+            return failure("The selected window could not be verified. Refresh and try Activate again.")
+        }
+        let application = inventory.application
+        AXUIElementSetMessagingTimeout(application, actionTimeout)
+        if booleanAttribute(application, kAXFrontmostAttribute, timeout: 0.25) != true {
+            var settable: DarwinBoolean = false
+            AXUIElementSetMessagingTimeout(application, actionTimeout)
+            if AXUIElementIsAttributeSettable(application, kAXFrontmostAttribute as CFString, &settable) == .success,
+               settable.boolValue {
+                // This is the public, target-supported Accessibility attribute,
+                // used only for this explicit user request and verified owner.
+                guard isCurrent(),
+                      let current = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+                      current.elements.contains(where: { CFEqual($0, record.element) }),
+                      owner(of: application) == entry.pid,
+                      owner(of: record.element) == entry.pid else {
+                    return failure("Window activation cancelled.")
+                }
+                guard isCurrent() else { return failure("Window activation cancelled.") }
+                _ = AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+            }
+        }
+        // Activating an app can select its previous key window. Resolve the
+        // same retained member again and raise it after the foreground request.
+        guard isCurrent(),
+              let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+              fresh.elements.contains(where: { CFEqual($0, record.element) }),
+              owner(of: record.element) == entry.pid else {
+            return failure("The selected window is no longer available. No further action was sent.")
+        }
+        AXUIElementSetMessagingTimeout(record.element, actionTimeout)
+        guard isCurrent() else { return failure("Window activation cancelled.") }
+        let raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
+
+        // IPC success is not focus success. Read back actual application and
+        // exact window focus for at most one second, never blocking the UI.
+        let deadline = ProcessInfo.processInfo.systemUptime + 1
+        var frontmost = false
+        repeat {
+            guard isCurrent(), owner(of: record.element) == entry.pid else {
+                return failure("Window activation cancelled.")
+            }
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0 else { break }
+            let focus = focusState(of: application, timeout: Float(min(0.2, remaining)))
+            frontmost = focus.frontmost
+            if focus.frontmost, let focused = focus.element, CFEqual(focused, record.element) {
+                return ActivationVerification(message: nil, deadline: deadline)
+            }
+            let pause = min(0.08, deadline - ProcessInfo.processInfo.systemUptime)
+            if pause > 0 { Thread.sleep(forTimeInterval: pause) }
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        if frontmost {
+            let detail = raised == .success ? "" : " (Accessibility error \(raised.rawValue))"
+            return failure("The application is active, but the selected window did not gain keyboard focus\(detail). Try Activate again.")
+        }
+        return failure("macOS did not give this application foreground focus. Try Activate again.")
     }
 
     private func cache(_ snapshot: WindowSnapshot, for token: UInt32, record: RetainedWindow) {
