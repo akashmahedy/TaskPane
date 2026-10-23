@@ -6,6 +6,13 @@ extension WindowEntry {
     var arrangementKey: String { bundleIdentifier ?? "app:\(appName)" }
 }
 
+private struct StartButtonBoundsKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct TaskbarView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var metrics: MetricsService
@@ -127,6 +134,9 @@ struct TaskbarView: View {
         .tint(Color(taskPaneHex: preferences.accentHex))
         .accessibilityElement(children: .contain).accessibilityLabel("TaskPane taskbar")
         .contextMenu { taskbarCommands }
+        .overlayPreferenceValue(StartButtonBoundsKey.self) { anchor in
+            startMenuPresenter(anchor: anchor)
+        }
         .onChange(of: startPresented) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty) }
         .onChange(of: presentedGroups) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty) }
         .onDisappear { interactionChanged(false) }
@@ -139,10 +149,7 @@ struct TaskbarView: View {
                 Image(systemName: "square.grid.2x2.fill").font(.system(size: max(12, iconSize - 2), weight: .semibold))
                     .foregroundStyle(Color(taskPaneHex: preferences.accentHex)).frame(width: layout.itemHeight, height: layout.itemHeight)
             }.buttonStyle(.plain).help("Start · Search, pinned apps and recent apps").accessibilityLabel("Open Start menu")
-                .popover(isPresented: $startPresented, arrowEdge: startArrowEdge) {
-                    StartMenuView(launcher: launcher, settings: settings,
-                                  height: min(560, max(280, displayBounds.height - 120))) { startPresented = false }
-                }
+                .anchorPreference(key: StartButtonBoundsKey.self, value: .bounds) { $0 }
         case .pins:
             if vertical { VStack(spacing: layout.itemSpacing) { pinButtons } }
             else { HStack(spacing: layout.itemSpacing) { pinButtons } }
@@ -167,6 +174,22 @@ struct TaskbarView: View {
             Button(action: showSettings) {
                 Image(systemName: "slider.horizontal.3").font(.system(size: min(18, iconSize))).frame(width: 26, height: layout.itemHeight)
             }.buttonStyle(.plain).help("TaskPane settings").accessibilityLabel("TaskPane settings")
+        }
+    }
+
+    /// A single persistent presenter serves the button and the context command.
+    /// When the button is hidden, the bar itself supplies the attachment bounds.
+    private func startMenuPresenter(anchor: Anchor<CGRect>?) -> some View {
+        GeometryReader { geometry in
+            let bounds = anchor.map { geometry[$0] } ?? CGRect(origin: .zero, size: geometry.size)
+            Color.clear
+                .allowsHitTesting(false)
+                .frame(width: max(1, bounds.width), height: max(1, bounds.height))
+                .popover(isPresented: $startPresented, arrowEdge: startArrowEdge) {
+                    StartMenuView(launcher: launcher, settings: settings,
+                                  height: min(560, max(280, displayBounds.height - 120))) { startPresented = false }
+                }
+                .position(x: bounds.midX, y: bounds.midY)
         }
     }
 
@@ -289,8 +312,11 @@ struct TaskbarView: View {
     }
 
     private func arrange(_ key: String?, before target: String) -> Bool {
-        guard let key, key != target, applicationKeys.contains(key) else { return false }
-        settings.moveApplication(key, before: target, currentOrder: applicationKeys)
+        let order = applicationKeys
+        guard let key, key != target, order.contains(key), order.contains(target) else { return false }
+        // An earlier individual drag must not override this application move.
+        windows.resetWindowOrder()
+        settings.moveApplication(key, before: target, currentOrder: order, usingDisplayedOrder: true)
         return true
     }
 

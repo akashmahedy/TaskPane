@@ -103,8 +103,8 @@ public struct LayoutCustomization: Codable, Equatable {
 
     /// Begins manual ordering from what the user currently sees. An older manual
     /// order must not reorder unrelated apps after automatic sorting was enabled.
-    public func movingApplication(_ key: String, before target: String, currentOrder: [String]) -> LayoutCustomization? {
-        let source = autoArrange ? currentOrder + applicationOrder : applicationOrder + currentOrder
+    public func movingApplication(_ key: String, before target: String, currentOrder: [String], usingDisplayedOrder: Bool = false) -> LayoutCustomization? {
+        let source = autoArrange || usingDisplayedOrder ? currentOrder + applicationOrder : applicationOrder + currentOrder
         var seen = Set<String>()
         var order = source.filter { seen.insert($0).inserted }
         guard key != target, order.contains(key), order.contains(target) else { return nil }

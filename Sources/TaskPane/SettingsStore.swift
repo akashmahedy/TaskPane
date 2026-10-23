@@ -156,9 +156,10 @@ final class SettingsStore: ObservableObject {
         accept(candidate)
     }
 
-    func moveApplication(_ key: String, before target: String, currentOrder: [String]) {
+    func moveApplication(_ key: String, before target: String, currentOrder: [String], usingDisplayedOrder: Bool = false) {
         var candidate = preferences
-        guard let updated = candidate.layout.movingApplication(key, before: target, currentOrder: currentOrder) else { return }
+        guard let updated = candidate.layout.movingApplication(key, before: target, currentOrder: currentOrder,
+                                                             usingDisplayedOrder: usingDisplayedOrder) else { return }
         candidate.layout = updated
         accept(candidate)
     }

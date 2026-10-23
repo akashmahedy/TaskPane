@@ -303,6 +303,19 @@ struct PreferencesTests {
         try result.validate()
     }
 
+    @Test func combinedMoveUsesDisplayedSessionOrderInsteadOfOlderSavedOrder() throws {
+        var layout = LayoutCustomization()
+        layout.autoArrange = false
+        layout.applicationOrder = ["A", "B", "C", "not-running"]
+        // Individual window dragging put C first before the user combined apps.
+        let result = try #require(layout.movingApplication("B", before: "C", currentOrder: ["C", "A", "B"],
+                                                         usingDisplayedOrder: true))
+        #expect(result.applicationOrder == ["B", "C", "A", "not-running"])
+        #expect(!result.autoArrange)
+        #expect(layout.applicationOrder == ["A", "B", "C", "not-running"])
+        try result.validate()
+    }
+
     @Test func directionalMovesMoveOnePositionAndRespectBoundaries() throws {
         let layout = LayoutCustomization()
         let up = try #require(layout.movingApplication("B", direction: -1, currentOrder: ["A", "B", "C"]))
