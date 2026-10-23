@@ -6,7 +6,22 @@ This file records actual validation separately from planned coverage. Latest loc
 
 Swift 6 / Swift 5 language mode, macOS 14 deployment target. Local runtime target: Apple Silicon, macOS 27.0.1. No Intel or macOS 14 runtime result is claimed.
 
-## Latest follow-up — `7a7d0b8`
+## Latest bug-fix follow-up — `8815aa4`
+
+Application source: `8815aa4893dae4875da554600d4ba51cbe6b4608`. The optimized release build, strict ad-hoc signature verification and **41 tests in 3 suites** passed. [CI run 39965872433](https://github.com/akashmahedy/TaskPane/actions/runs/39965872433) passed. Final OCR delegation covered 3/3 selected production files, with no skipped files or confirmed remaining findings; the regression test was reviewed separately.
+
+Release executable SHA-256: `f4e095c9c1e9cd1329ff876127df6a1be02e19ddb077027cf02a4dbb0db0b279`. The app, packaged app and app extracted from the ZIP match, and all three strict signature checks passed. Private ZIP SHA-256: `06a0fb18d02e83d3ee9e2236b0960764b6127c87d8a152426101782cf682c39b`. The previous local app and package were preserved; no public binary release was uploaded.
+
+Native checks on the creator's Mac, using one connected display:
+
+- Applied Focus, which hides the launcher and enables auto-hide. The taskbar context-menu Start command opened the actual popover. Searching for TextEdit filtered the list and showed its launch result. Close dismissed the popover, and the context command reopened it successfully.
+- With Start open and the pointer outside the bar, read-only geometry showed the bar in its expanded position. After dismissal, with the cursor unchanged, the bar retracted 31 points towards the bottom. This checks the transition; an exact five-point visible strip is not claimed.
+- Restored the pre-test preferences through the app's validated Import flow. A private comparison confirmed every preference matched the snapshot, including appearance, widgets, pins, exclusions and ordering.
+- The restored visible Start button opened its popover; TextEdit search and Escape dismissal worked.
+
+Combined reorder's native acceptance remains pending. This rebuilt ad-hoc app does not yet have working Accessibility access, despite the older switch appearing enabled. Renewal of that existing permission awaits the user's specific approval. No broad permission reset or permission-database edit was performed. The regression test and source review pass, but they do not establish a native drag/drop result.
+
+## Earlier behavior follow-up — `7a7d0b8`
 
 Application source commit: `7a7d0b8d0643b644b88d3876bf4760149100d699`. The optimized release build and **40 tests in 3 suites** passed after the UI performance changes. This source commit was published, and [GitHub CI run 39956023920](https://github.com/akashmahedy/TaskPane/actions/runs/39956023920) completed successfully.
 

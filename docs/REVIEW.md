@@ -85,3 +85,13 @@ The three changed files (`Main.swift`, `CustomizationViews.swift`, `SettingsView
 The final GUI accepted Layout numeric edits and Dark → System appearance changes. A 12.02-second CPU-time sample during GUI interaction averaged 11.23% of one core. This is partial native evidence; it does not establish idle usage, long-run performance or all interaction behavior. Exact minimize/restore observations, a full-screen/Spaces inventory boundary, and pending physical drag/right-click, full-screen/hide/quit and user acceptance checks are recorded in [VALIDATION.md](VALIDATION.md).
 
 Validation status and remaining platform limits are recorded in [VALIDATION.md](VALIDATION.md). This review is not a guarantee that every third-party app or macOS version behaves identically.
+
+## Combined ordering and hidden-launcher Start fixes
+
+A fresh OCR delegation review of `b2dd392..0631508` covered all 12 selected source files, with no skipped files. Two test files and six documentation files were also reviewed. It confirmed two medium bugs: retained individual-window order overrode combined app dragging, and the hidden-launcher Start command had no popover owner while leaving auto-hide expanded.
+
+Source `8815aa4` addresses both. Combined movement validates both current keys, clears the earlier session window order and explicitly starts from the displayed application order, retaining dormant application keys. The first fix attempt exposed a stale saved-order jump; re-review caught it, and the regression test covers saved ABC/session CAB/B-before-C producing BCA without moving an unrelated app to its old position.
+
+Start now has one persistent bar overlay presenter. It resolves the visible launcher button's bounds through an anchor preference and falls back to the bar bounds when the button is absent. Hit testing is disabled only for the clear anchor before the presentation modifier; the presented Start controls remain interactive.
+
+Final OCR delegation selected three production files (`TaskbarView.swift`, `SettingsStore.swift`, `Preferences.swift`): **3 reviewed, 0 skipped, 100% coverage, no confirmed remaining findings**. The excluded regression-test diff received manual review. The optimized release build, strict signature verification, **41 tests in 3 suites**, and [CI run 39965872433](https://github.com/akashmahedy/TaskPane/actions/runs/39965872433) passed. Native Start/Focus results and the remaining permission-dependent combined-drag check are recorded in [VALIDATION.md](VALIDATION.md).
