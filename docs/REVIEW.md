@@ -44,10 +44,10 @@ Native testing exposed a misleading activation error and a restore raise timeout
 
 ## Foreground-focus follow-up
 
-Standalone GUI testing with two disposable windows confirmed separate rows, minimize/restore continuity and closing only the selected window. It also showed that raising the selected window did not reliably give its application keyboard focus. A second one-file OCR delegation pass selected `WindowService.swift`; the complete diff was reviewed (1/1, none skipped).
+Standalone GUI testing with two disposable windows confirmed separate rows, minimize/restore continuity and closing only the selected window. A real mouse-click check confirmed that raising the selected window did not reliably give its application keyboard focus. The follow-up OCR delegation passes selected `WindowService.swift`; each complete diff was reviewed (1/1, none skipped).
 
-- Active TaskPane windows yield activation through the macOS 14+ cooperative API. A Boolean request result is never treated as proof of focus.
-- For an authorized individual-window action, the serial AX worker rechecks exact membership, owner and trust before requesting the target-supported public `AXFrontmost` attribute. It raises the same retained element again after activation.
+- The public Workspace API brokers activation of the existing owner from the nonactivating bar. Its callback must return the requested process and bundle URL before further window work proceeds. The selected window is restored before the request and raised again afterward through exact retained AX identity.
+- The default application reopen event can have app-specific effects. Preflight and callback checks do not make process reuse atomic; a changed returned process is rejected without a further window action. No private process-focus API or synthetic input event is used.
 - A bounded readback requires both application frontmost state and an exact `AXFocusedWindow` match. The main thread also confirms the foreground process before reporting success.
 - New TaskPane actions cancel stale activation work and delayed status updates. A foreground change to an unrelated application also cancels the pending activation. Explicit queued minimize/close commands retain their separate identity checks and are not dropped by a later command. Close is still sent only once.
 

@@ -260,15 +260,54 @@ final class WindowService: ObservableObject {
             refresh()
             return
         }
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
-            if NSApp.isActive {
-                NSApp.yieldActivation(to: application)
-                _ = application.activate(from: NSRunningApplication.current, options: [])
-            } else {
-                _ = application.activate(options: [])
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+            finishActivationRequest(pid: pid, entry: entry, request: request, successMessage: successMessage)
+            return
+        }
+        guard let ownerURL = application.bundleURL, ownerURL.isFileURL else {
+            _ = application.activate(options: [])
+            finishActivationRequest(pid: pid, entry: entry, request: request, successMessage: successMessage)
+            return
+        }
+        guard let current = validApplication(pid: pid),
+              current.bundleURL?.standardizedFileURL == ownerURL.standardizedFileURL else {
+            completeAction(request)
+            lastActionMessage = "This application's running instance changed. Refresh and try again."
+            refresh()
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+        configuration.allowsRunningApplicationSubstitution = false
+        configuration.addsToRecentItems = false
+        configuration.promptsUserIfNeeded = false
+        let currentLifecycle = lifecycle
+        // Workspace brokers foreground activation even from a nonactivating
+        // panel. Its default reopen event can have app-specific side effects.
+        // Preflight and callback checks cannot make process reuse atomic.
+        NSWorkspace.shared.openApplication(at: ownerURL, configuration: configuration) { [weak self] opened, error in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isCurrentAction(request), self.lifecycle == currentLifecycle else { return }
+                self.cancelActivationIfForegroundChanged()
+                guard self.isCurrentAction(request) else { return }
+                guard error == nil, let opened, opened.processIdentifier == pid,
+                      let running = self.validApplication(pid: pid),
+                      running.bundleURL?.standardizedFileURL == ownerURL.standardizedFileURL else {
+                    self.completeAction(request)
+                    self.lastActionMessage = error.map { "macOS could not activate this running application: \($0.localizedDescription)" }
+                        ?? "macOS returned a different application instance. No further window action was sent; refresh and try again."
+                    self.refresh()
+                    return
+                }
+                self.finishActivationRequest(pid: pid, entry: entry, request: request, successMessage: successMessage)
             }
         }
-        // AppKit's Boolean is request acceptance, not proof of foreground focus.
+    }
+
+    private func finishActivationRequest(pid: Int32, entry: WindowEntry?, request: UUID, successMessage: String?) {
+        guard isCurrentAction(request) else { return }
+        // A successful broker callback is not proof of foreground window focus.
         guard let entry else {
             verifyForeground(pid: pid, request: request,
                              deadline: ProcessInfo.processInfo.systemUptime + 1, successMessage: successMessage)
@@ -672,25 +711,6 @@ private final class WindowInspector: @unchecked Sendable {
             return failure("The selected window could not be verified. Refresh and try Activate again.")
         }
         let application = inventory.application
-        AXUIElementSetMessagingTimeout(application, actionTimeout)
-        if booleanAttribute(application, kAXFrontmostAttribute, timeout: 0.25) != true {
-            var settable: DarwinBoolean = false
-            AXUIElementSetMessagingTimeout(application, actionTimeout)
-            if AXUIElementIsAttributeSettable(application, kAXFrontmostAttribute as CFString, &settable) == .success,
-               settable.boolValue {
-                // This is the public, target-supported Accessibility attribute,
-                // used only for this explicit user request and verified owner.
-                guard isCurrent(),
-                      let current = applicationWindows(pid: entry.pid, timeout: actionTimeout),
-                      current.elements.contains(where: { CFEqual($0, record.element) }),
-                      owner(of: application) == entry.pid,
-                      owner(of: record.element) == entry.pid else {
-                    return failure("Window activation cancelled.")
-                }
-                guard isCurrent() else { return failure("Window activation cancelled.") }
-                _ = AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-            }
-        }
         // Activating an app can select its previous key window. Resolve the
         // same retained member again and raise it after the foreground request.
         guard isCurrent(),
