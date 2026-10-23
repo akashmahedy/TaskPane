@@ -92,6 +92,7 @@ struct StartMenuView: View {
             .onAppear { presentationID = UUID(); launchRequest = nil; searchFocused = true }
             .onDisappear { presentationID = UUID(); launchRequest = nil }
             .onExitCommand(perform: dismiss)
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("TaskPane Start menu")
     }
 

@@ -186,6 +186,10 @@ struct SettingsView: View {
                             .disabled(!windows.accessibilityGranted).accessibilityLabel("Minimize \(entry.appName): \(entry.title)")
                         Button { windows.close(entry) } label: { Image(systemName: "xmark") }
                             .disabled(!windows.accessibilityGranted).accessibilityLabel("Close \(entry.appName): \(entry.title)")
+                        Menu {
+                            WindowContextCommands(entry: entry, windows: windows, settings: settings)
+                        } label: { Image(systemName: "ellipsis") }
+                            .accessibilityLabel("More controls for \(entry.appName): \(entry.title)")
                     }.padding(.vertical, 4)
                 }
                 if entries.count > 8 { Text("Showing 8 of \(entries.count) windows. Search to narrow the list.").font(.system(size: 10)).foregroundStyle(.secondary) }
