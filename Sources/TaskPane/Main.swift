@@ -26,7 +26,6 @@ final class TaskPaneAppDelegate: NSObject, NSApplicationDelegate {
     private var bars: TaskbarCoordinator?
     private var statusItem: NSStatusItem?
     private var subscriptions = Set<AnyCancellable>()
-    private var lastInterval: Double = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
@@ -42,13 +41,15 @@ final class TaskPaneAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit TaskPane", action: #selector(quit), keyEquivalent: "q").target = self
         statusItem?.menu = menu
         settings.$preferences.combineLatest(metrics.$snapshot).sink { [weak self] preferences, snapshot in
-            guard let self else { return }
-            self.updateStatusItem(preferences, snapshot)
-            if self.lastInterval != preferences.refreshInterval {
-                self.lastInterval = preferences.refreshInterval
-                self.metrics.setInterval(preferences.refreshInterval)
-            }
-            self.updateAppearance(preferences.theme)
+            self?.updateStatusItem(preferences, snapshot)
+        }.store(in: &subscriptions)
+        // Changing NSApp.appearance invalidates every native view. Metrics
+        // updates must never repeatedly rebuild slider appearances/tick caches.
+        settings.$preferences.map(\.theme).removeDuplicates().sink { [weak self] theme in
+            self?.updateAppearance(theme)
+        }.store(in: &subscriptions)
+        settings.$preferences.map(\.refreshInterval).removeDuplicates().sink { [weak self] interval in
+            self?.metrics.setInterval(interval)
         }.store(in: &subscriptions)
         showSettings()
     }

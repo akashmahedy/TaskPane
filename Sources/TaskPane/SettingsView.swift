@@ -302,7 +302,8 @@ struct SettingsView: View {
                 sliderRow("Icon size", value: $settings.preferences.iconSize, range: 12...64, suffix: "pt")
                 sliderRow("Text size", value: $settings.preferences.fontSize, range: 9...24, suffix: "pt")
                 SettingRow(title: "Background opacity") {
-                    Slider(value: $settings.preferences.barOpacity, in: 0.2...1, step: 0.05).frame(width: 180).accessibilityLabel("Background opacity")
+                    Slider(value: quantized($settings.preferences.barOpacity, range: 0.2...1, step: 0.05), in: 0.2...1)
+                        .frame(width: 180).accessibilityLabel("Background opacity")
                     Text("\(Int(settings.preferences.barOpacity * 100))%").monospacedDigit().frame(width: 40, alignment: .trailing)
                 }
                 Divider()
@@ -425,9 +426,17 @@ struct SettingsView: View {
 
     private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
         SettingRow(title: title) {
-            Slider(value: value, in: range, step: 1).frame(width: 180).accessibilityLabel(title)
+            Slider(value: quantized(value, range: range, step: 1), in: range).frame(width: 180).accessibilityLabel(title)
             Text("\(Int(value.wrappedValue)) \(suffix)").monospacedDigit().frame(width: 45, alignment: .trailing)
         }
+    }
+
+    private func quantized(_ value: Binding<Double>, range: ClosedRange<Double>, step: Double) -> Binding<Double> {
+        Binding(get: { value.wrappedValue }, set: { proposed in
+            guard proposed.isFinite else { return }
+            let rounded = min(range.upperBound, max(range.lowerBound, (proposed / step).rounded() * step))
+            if value.wrappedValue != rounded { value.wrappedValue = rounded }
+        })
     }
 
     private func movePin(_ index: Int, direction: Int) {

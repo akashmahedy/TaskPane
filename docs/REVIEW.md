@@ -73,4 +73,13 @@ The follow-up OCR delegation selection contained 12 production files: 12 reviewe
 
 The optimized release build and strict ad-hoc signature check passed. The repository test script and isolated core suite each passed **40 tests in 3 suites**. Native validation of these new interactions is pending. Earlier native smoke acceptance applies to the executable recorded above, not automatically to this follow-up. These changes do not establish full reference-app parity or broader app, display and Spaces reliability.
 
+## Native UI performance follow-up
+
+A separate Start accessibility-labeling and Overview More-menu follow-up (`fb61`) was fully reviewed: 2 files reviewed, 0 skipped. Subsequent native testing exposed high CPU and Layout-page timeouts. The process profile placed **521 of 521 main-thread samples** in the metrics publication → appearance assignment → native slider tick-cache rebuilding path. This identifies an expensive appearance traversal, rather than establishing an AX/menu recursion.
+
+- Theme and refresh-interval updates now have separate deduplicated subscriptions. Metrics updates refresh status-item content without reassigning `NSApp.appearance`.
+- Layout and Appearance sliders now use continuous native controls with quantization in their bindings, retaining the configured value increments without generating dense tick-mark caches. Unchanged quantized values are not written back.
+
+The three changed files (`Main.swift`, `CustomizationViews.swift`, `SettingsView.swift`) received independent review: 3 reviewed, 0 skipped, no confirmed remaining finding. Full source-only app typechecking passed. The 40-test result above predates these UI performance edits; the new optimized release build and native CPU/Layout retest are pending at this checkpoint. No runtime performance pass is claimed yet.
+
 Validation status and remaining platform limits are recorded in [VALIDATION.md](VALIDATION.md). This review is not a guarantee that every third-party app or macOS version behaves identically.

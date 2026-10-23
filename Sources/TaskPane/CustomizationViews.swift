@@ -40,7 +40,7 @@ struct LayoutSettingsView: View {
                 numeric("Item spacing", value: $settings.preferences.layout.itemSpacing, range: 0...30)
                 numeric("Item corner radius", value: $settings.preferences.layout.itemCornerRadius, range: 0...50)
                 SettingRow(title: "Item background opacity") {
-                    Slider(value: $settings.preferences.layout.itemOpacity, in: 0...1, step: 0.01).frame(width: 190)
+                    Slider(value: quantizedSliderBinding($settings.preferences.layout.itemOpacity, range: 0...1, scale: 100), in: 0...1).frame(width: 190)
                         .accessibilityLabel("Item background opacity")
                     Text("\(Int(layout.itemOpacity * 100))%").monospacedDigit().frame(width: 48, alignment: .trailing)
                 }
@@ -61,7 +61,7 @@ struct LayoutSettingsView: View {
 
     private func numeric(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String = "pt") -> some View {
         SettingRow(title: title) {
-            Slider(value: value, in: range, step: 1).frame(width: 190).accessibilityLabel(title)
+            Slider(value: quantizedSliderBinding(value, range: range), in: range).frame(width: 190).accessibilityLabel(title)
             TextField(title, value: value, format: .number.precision(.fractionLength(0)))
                 .textFieldStyle(.roundedBorder).frame(width: 55).multilineTextAlignment(.trailing)
                 .onChange(of: value.wrappedValue) { _, number in
@@ -70,6 +70,19 @@ struct LayoutSettingsView: View {
                 }
             Text(unit).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 18)
         }
+    }
+
+    /// Quantize values in the binding instead of asking AppKit to create a tick
+    /// for every step across wide ranges (for example, all 1,001 offsets).
+    private func quantizedSliderBinding(_ value: Binding<Double>, range: ClosedRange<Double>, scale: Double = 1) -> Binding<Double> {
+        Binding(get: {
+            let current = value.wrappedValue
+            return current.isFinite ? min(range.upperBound, max(range.lowerBound, current)) : range.lowerBound
+        }, set: { proposed in
+            let clamped = proposed.isFinite ? min(range.upperBound, max(range.lowerBound, proposed)) : range.lowerBound
+            let quantized = min(range.upperBound, max(range.lowerBound, (clamped * scale).rounded() / scale))
+            if value.wrappedValue != quantized { value.wrappedValue = quantized }
+        })
     }
 
     private func densityButton(_ title: String, height: Double, spacing: Double) -> some View {
