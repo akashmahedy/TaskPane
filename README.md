@@ -8,7 +8,7 @@ The main product priority is Lawand Taskbar-style window behavior and customizat
 
 ## In this alpha
 
-These features are implemented in source. The latest grouping, drag, Start menu and expanded context-menu changes await native acceptance; full reference parity is not claimed.
+These features are implemented through source `7a7d0b8`, which passed the optimized release build, 40 tests in 3 suites and [GitHub CI](https://github.com/akashmahedy/TaskPane/actions/runs/39956023920). Partial native checks cover selected window minimize/restore and Layout/theme editing; Start contents/search and menu visibility also have partial evidence. Physical drag/right-click, full-screen/hide/quit outcomes, broader inventory/Spaces/displays and the user's manual check remain pending. See [validation details](docs/VALIDATION.md); full reference parity is not claimed.
 
 - Individual verified window buttons, with an adjacent mode that keeps each app's windows together without combining them. Explicit options can combine windows into app buttons always or when space is needed.
 - Activate, minimize, restore, close and full-screen controls, focused-window indicators, and app pin/unpin, hide, normal quit and exclusion commands.

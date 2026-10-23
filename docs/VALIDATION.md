@@ -6,7 +6,27 @@ This file records actual validation separately from planned coverage. Latest loc
 
 Swift 6 / Swift 5 language mode, macOS 14 deployment target. Local runtime target: Apple Silicon, macOS 27.0.1. No Intel or macOS 14 runtime result is claimed.
 
-## Completed checks
+## Latest follow-up — `7a7d0b8`
+
+Application source commit: `7a7d0b8d0643b644b88d3876bf4760149100d699`. The optimized release build and **40 tests in 3 suites** passed after the UI performance changes. This source commit was published, and [GitHub CI run 39956023920](https://github.com/akashmahedy/TaskPane/actions/runs/39956023920) completed successfully.
+
+Release executable SHA-256: `983e0a6ffd8a320a897ac826217653f62e014c15cba22d0d3d57da8bccd01fb9`. Packaging checks confirmed matching executables in the running source bundle, packaged bundle and extracted ZIP; strict ad-hoc signature checks passed. Local ZIP SHA-256: `f844e19579ae1e3d27979971067e9962722aad322fe9b0b30dab5dfe1b9d8480`. A public binary release has not been uploaded.
+
+The coordinating agent reported these partial native results on the final executable:
+
+- The GUI showed Accessibility **Connected**. Two disposable fixture documents appeared as separate Overview rows.
+- Explicitly minimizing fixture A produced A minimized / B unminimized. Restoring A produced A unminimized and an exact focused-window readback for A. A clean global-foreground result was not accepted in this repeat because the user was working concurrently.
+- Layout numeric editing and switching Dark → System appearance worked. The test setup was configured through the GUI to use a full-width bar with adaptive item-width bounds of 80–220 points.
+- Window/application menu commands were visible. Menu visibility does not establish successful full-screen, hide or quit execution, or physical right-click behavior.
+- A later taskbar observation showed only fixture B. TextEdit's native View menu then reported **Exit Full Screen** for fixture A, while its fresh AX window list returned only B. After exiting full screen through TextEdit, a fresh AX list returned both fixtures unminimized and both separate taskbar buttons were visible. This exposes a full-screen/Spaces inventory boundary; it does not establish reliable TaskPane full-screen entry/exit across Spaces.
+
+Start-menu contents and search have partial native evidence, including the intermediate `b744f77` build: an alphabetical app list, pinned-app grid and recent-app list were observed. These observations do not establish that every Start interaction was repeated on `7a7d0b8`.
+
+A read-only process CPU-time measurement during GUI interaction recorded **1.35 CPU seconds over 12.02 wall-clock seconds**, averaging **11.23% of one core** (100% equals one fully occupied core). Process identity remained stable and the on-disk executable hash matched. This is one short interactive sample, not an idle or sustained-performance benchmark.
+
+Physical window/pin dragging and right-click checks, full-screen/hide/quit action acceptance, broader inventory continuity, Spaces/display coverage and the user's manual acceptance remain pending. The earlier accepted smoke baseline below is preserved separately.
+
+## Earlier alpha checks
 
 - Debug and optimized release bundle builds passed. `codesign --verify --deep --strict` accepted the final local ad-hoc bundle. Plist and shell syntax checks passed.
 - Swift Testing: **24 tests in 2 suites passed**. Coverage includes all presets, expanded layout export/import, old schema-1 backups, numeric/path/widget validation, manual ordering transitions, corrupt-file preservation and failed writes.
@@ -16,7 +36,7 @@ Swift 6 / Swift 5 language mode, macOS 14 deployment target. Local runtime targe
 - The earlier seven-second native diagnostic passed CPU/RAM sanity checks and returned network/battery readings, two displays and 14 verified AX windows. This diagnostic process has its own launch/permission context; it does not establish that the interactive GUI has window-control access.
 - Open Code Review delegation covered all 21 selected files, with no skipped reviewable files. Tests and excluded metadata/docs received additional manual review. See [REVIEW.md](REVIEW.md).
 
-## Latest native window-control checks
+## Accepted earlier window-control baseline — `a9d292f`
 
 Source commit: `a9d292f`. Release executable SHA-256: `9627e2846395c19f713e8c73b9bd005f3ffcd8555c55ca8667652a1c5318affa`. The running bundle, packaged bundle and ZIP contain the same executable. The release build, signature check and all 24 tests passed. [GitHub CI run 39949068869](https://github.com/akashmahedy/TaskPane/actions/runs/39949068869) also passed.
 
@@ -32,4 +52,4 @@ The public Workspace broker and exact AX focus readback were exercised in these 
 
 ## Unverified scenarios
 
-Broader inventory continuity, renamed/hidden windows, physical display unplug/replug, real sleep/wake, Intel hardware, every supported macOS version, other third-party app window implementations and exhaustive Spaces/full-screen behavior require later testing. A newly discovered minimized dialog without prior verified standard-window identity remains filtered when dialog display is disabled. Native actions deliberately refuse ambiguous matches.
+Broader inventory continuity, renamed/hidden windows, physical drag/right-click input, physical display unplug/replug, real sleep/wake, Intel hardware, every supported macOS version, other third-party app window implementations and exhaustive Spaces/full-screen behavior require later testing. Full-screen, hide and normal-quit execution and the user's final manual check remain unaccepted. A newly discovered minimized dialog without prior verified standard-window identity remains filtered when dialog display is disabled. Native actions deliberately refuse ambiguous matches.

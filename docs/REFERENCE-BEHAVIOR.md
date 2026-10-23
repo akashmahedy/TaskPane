@@ -31,17 +31,17 @@ These observations were supplied by the coordinating agent from actual CUA inspe
 
 These preference values describe the inspected installation, not established factory defaults. Exact Start placement across displays, outside-click dismissal, keyboard traversal and drag outcomes remain unverified here.
 
-## TaskPane baseline and active work
+## TaskPane implementation and partial native evidence
 
-The baseline below comes from source inspection before the current parity changes. The window-ordering and Start/menu implementation pass is **in progress**, with no new runtime pass claimed. Pending and later items remain separate follow-up work.
+The window-ordering and Start/menu changes are implemented in source `7a7d0b8`. The optimized release build, 40 tests in 3 suites, and [CI run 39956023920](https://github.com/akashmahedy/TaskPane/actions/runs/39956023920) passed. Native observations below were supplied by the coordinating agent; they establish partial coverage, not full reference parity.
 
-| Priority | Baseline gap | Scope / acceptance target |
+| Area | Implemented source | Native evidence / remaining acceptance |
 | --- | --- | --- |
-| First | `TaskbarView.swift` collapses grouped windows into an app button/popup. | Keep one button per window; grouping changes adjacency only. |
-| First | Drag payloads and stored ordering identify apps, preventing interleaved same-app windows. Pins lack direct drag handlers. | Independent window ordering and pin dragging; preserve identity and ordering through focus changes. |
-| Next | The launcher is a centered titled window containing one searchable app list. | Start popover at the invoked bar, alphabetical headings, pinned/recent sections, search and Escape dismissal. Validate on each display. |
-| Next | Window menus expose Activate, Minimize and Close. | Add the observed application commands and Fullscreen, with safe exact-window actions. |
-| Pending | Visibility hints do not establish Space membership; previews are absent. | Explicit Space/display/full-screen tests; optional permission-based thumbnails. |
-| Later | Additional reference options remain incomplete. | Track middle-click behavior, badges, tab handling and overlap avoidance separately. |
+| Window buttons | Separate and adjacent modes retain individual buttons. Optional explicit combine modes are additional TaskPane choices. | Final GUI showed separate Overview rows and selected minimize/restore state changes. Both separate bar buttons were observed after leaving full screen. During full screen, one fixture was absent from its owner's fresh AX list; broader inventory continuity remains unaccepted. |
+| Ordering | Individual session window order, adjacent app-block moves across apps, and pin dragging. | Core ordering tests passed; physical dragging, filtering/Space transitions and display coverage remain pending. |
+| Start | Bar-anchored popover with search, alphabetical headings, pinned/recent apps and Escape dismissal. | Contents/search were observed during the parity follow-up, including intermediate `b744f77`. A complete final-build Start interaction/display pass is unclaimed. |
+| Window/app commands | Full-screen toggle, pin/unpin, hide, normal quit and exclude commands alongside activate/minimize/restore/close. | Final GUI menu entries were visible and explicit minimize/restore was checked. Physical right-click and full-screen/hide/quit outcomes remain pending. |
+| Spaces and previews | Visibility remains a hint; no thumbnail collector exists. | Authoritative Space filtering and optional permission-based thumbnails remain gaps. |
+| Additional reference options | Middle-click close, badges, tab handling and overlap avoidance remain incomplete. | Track and validate these separately. |
 
-The basic two-window TaskPane smoke test recorded in [ROADMAP.md](ROADMAP.md) is narrower than this ledger. Grouping, drag, Start and menu changes need their own native checks before being marked complete. Existing user preferences must survive the changes.
+The earlier accepted two-window smoke baseline and final executable/hash details remain in [VALIDATION.md](VALIDATION.md). Layout editing and theme changes passed on the final GUI; the short interactive CPU sample is not a sustained-performance result. Broader native checks and the user's manual acceptance remain pending. Existing user preferences must survive these changes.
