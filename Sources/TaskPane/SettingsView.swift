@@ -212,6 +212,12 @@ struct SettingsView: View {
 
     private var taskbar: some View {
         VStack(spacing: 20) {
+            Surface(title: "Classic taskbar behavior", subtitle: "Keep every window directly clickable, put the same app's windows together, and restore minimized windows from the bar.") {
+                Button("Use classic taskbar behavior") { windows.resetWindowOrder(); settings.useTaskbarBehavior() }
+                    .buttonStyle(.borderedProminent)
+                Text("Keeps your appearance, widgets, pins and exclusions. Window titles and cross-display windows are enabled; individual window order stays stable for this session.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             Surface(title: "Placement & behavior") {
                 SettingRow(title: "App mode") { enumPicker($settings.preferences.appMode, title: "App mode") }
                 Divider()

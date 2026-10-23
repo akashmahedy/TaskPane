@@ -10,21 +10,30 @@ struct TaskbarView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var metrics: MetricsService
     @ObservedObject var windows: WindowService
+    @ObservedObject var launcher: LauncherService
     let displayBounds: CGRect
     let vertical: Bool
     let showSettings: () -> Void
-    let showLauncher: () -> Void
+    let interactionChanged: (Bool) -> Void
+    @ViewState private var startPresented = false
+    @ViewState private var presentedGroups = Set<String>()
     private var preferences: TaskPanePreferences { settings.preferences }
     private var layout: LayoutCustomization { preferences.layout }
     private var iconSize: Double { min(preferences.iconSize, layout.itemHeight - 8) }
 
     private var visibleWindows: [WindowEntry] {
-        windows.windows.filter { entry in
-            !preferences.excludedBundleIdentifiers.contains(entry.bundleIdentifier ?? "") &&
+        arrangedWindows.filter { entry in
             (!preferences.currentDisplayOnly || displayBounds.contains(CGPoint(x: entry.bounds.midX, y: entry.bounds.midY))) &&
             (layout.showMinimizedWindows || !entry.isMinimized) &&
             (layout.showDialogs || !entry.isDialog) &&
             (layout.showOffscreenWindows || entry.isOnScreen || entry.isMinimized)
+        }
+    }
+    /// Arrange before filtering so a hidden sibling cannot change its app's
+    /// relative position when it becomes visible again.
+    private var arrangedWindows: [WindowEntry] {
+        let filtered = windows.windows.filter {
+            !preferences.excludedBundleIdentifiers.contains($0.bundleIdentifier ?? "")
         }.sorted { lhs, rhs in
             if !layout.autoArrange {
                 let a = layout.applicationOrder.firstIndex(of: lhs.arrangementKey) ?? Int.max
@@ -38,10 +47,17 @@ struct TaskbarView: View {
                 let comparison = lhs.title.localizedStandardCompare(rhs.title)
                 if comparison != .orderedSame { return comparison == .orderedAscending }
             }
+            if !layout.autoArrange { return lhs.id < rhs.id }
             let comparison = lhs.appName.localizedStandardCompare(rhs.appName)
             if comparison != .orderedSame { return comparison == .orderedAscending }
             return lhs.id < rhs.id
         }
+        let ids = WindowArrangement.ordered(
+            items: filtered.map { WindowArrangementItem(id: String($0.id), applicationKey: $0.arrangementKey) },
+            manualOrder: layout.autoArrange ? [] : windows.manualWindowOrder,
+            groupAdjacent: preferences.grouping == .adjacent)
+        let entries = Dictionary(uniqueKeysWithValues: filtered.map { (String($0.id), $0) })
+        return ids.compactMap { entries[$0] }
     }
     private var applicationKeys: [String] {
         var seen = Set<String>()
@@ -64,8 +80,13 @@ struct TaskbarView: View {
             return comparison == .orderedSame ? lhs.pid < rhs.pid : comparison == .orderedAscending
         }
     }
-    private var groupedWindows: Bool {
-        preferences.grouping == .always || (preferences.grouping == .automatic && visibleWindows.count > 7)
+    private func combinesWindows(available: CGFloat) -> Bool {
+        if preferences.grouping == .always { return true }
+        guard preferences.grouping == .automatic, applicationKeys.count < visibleWindows.count else { return false }
+        let minimum = vertical || !preferences.showWindowTitles ? layout.itemHeight
+            : layout.itemSizing == .fixed ? layout.itemWidth : layout.minItemWidth
+        let required = Double(visibleWindows.count) * minimum + Double(max(0, visibleWindows.count - 1)) * layout.itemSpacing
+        return required > Double(available)
     }
     private var visibleWidgets: [TaskPaneCore.WidgetConfiguration] {
         preferences.widgets.filter { $0.placement.showsInTaskbar && ($0.kind != .clock || preferences.showClock) }
@@ -105,23 +126,38 @@ struct TaskbarView: View {
         .overlay(RoundedRectangle(cornerRadius: layout.barCornerRadius).stroke(Color.primary.opacity(0.12), lineWidth: 1))
         .tint(Color(taskPaneHex: preferences.accentHex))
         .accessibilityElement(children: .contain).accessibilityLabel("TaskPane taskbar")
+        .contextMenu { taskbarCommands }
+        .onChange(of: startPresented) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty) }
+        .onChange(of: presentedGroups) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty) }
+        .onDisappear { interactionChanged(false) }
     }
 
     @ViewBuilder private func sectionContent(_ section: BarSection) -> some View {
         switch section {
         case .launcher:
-            Button(action: showLauncher) {
+            Button { startPresented.toggle() } label: {
                 Image(systemName: "square.grid.2x2.fill").font(.system(size: max(12, iconSize - 2), weight: .semibold))
                     .foregroundStyle(Color(taskPaneHex: preferences.accentHex)).frame(width: layout.itemHeight, height: layout.itemHeight)
-            }.buttonStyle(.plain).help("Open application launcher").accessibilityLabel("Open application launcher")
+            }.buttonStyle(.plain).help("Start · Search, pinned apps and recent apps").accessibilityLabel("Open Start menu")
+                .popover(isPresented: $startPresented, arrowEdge: startArrowEdge) {
+                    StartMenuView(launcher: launcher, settings: settings,
+                                  height: min(560, max(280, displayBounds.height - 120))) { startPresented = false }
+                }
         case .pins:
             if vertical { VStack(spacing: layout.itemSpacing) { pinButtons } }
             else { HStack(spacing: layout.itemSpacing) { pinButtons } }
         case .windows:
             GeometryReader { area in
                 ScrollView(vertical ? .vertical : .horizontal, showsIndicators: false) {
-                    if vertical { VStack(spacing: layout.itemSpacing) { windowButtons(width: nil) } }
-                    else { HStack(spacing: layout.itemSpacing) { windowButtons(width: adaptiveWidth(area.size.width)) }.frame(minHeight: area.size.height) }
+                    if vertical {
+                        VStack(spacing: layout.itemSpacing) {
+                            windowButtons(width: nil, combined: combinesWindows(available: area.size.height))
+                        }
+                    } else {
+                        let combined = combinesWindows(available: area.size.width)
+                        HStack(spacing: layout.itemSpacing) { windowButtons(width: adaptiveWidth(area.size.width, combined: combined), combined: combined) }
+                            .frame(minHeight: area.size.height)
+                    }
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         case .widgets:
@@ -134,13 +170,31 @@ struct TaskbarView: View {
         }
     }
 
-    private func adaptiveWidth(_ available: CGFloat) -> CGFloat {
-        let usesApplicationLabels = !windows.accessibilityGranted || groupedWindows
+    private var startArrowEdge: Edge {
+        switch preferences.barEdge {
+        case .bottom: return .bottom
+        case .top: return .top
+        case .left: return .leading
+        case .right: return .trailing
+        }
+    }
+
+    @ViewBuilder private var taskbarCommands: some View {
+        Button("Start menu") { startPresented = true }
+        Button("TaskPane settings…", action: showSettings)
+        Button("Refresh windows") { windows.refresh() }
+        Divider()
+        Toggle("Automatically hide taskbar", isOn: $settings.preferences.autoHide)
+        Button("Use classic taskbar behavior") { windows.resetWindowOrder(); settings.useTaskbarBehavior() }
+    }
+
+    private func adaptiveWidth(_ available: CGFloat, combined: Bool) -> CGFloat {
+        let usesApplicationLabels = !windows.accessibilityGranted || combined
         let showsLabels = usesApplicationLabels ? preferences.showAppNames : preferences.showWindowTitles
         guard showsLabels else { return CGFloat(layout.itemHeight) }
         if layout.itemSizing == .fixed { return CGFloat(layout.itemWidth) }
         let renderedCount = !windows.accessibilityGranted ? fallbackApplications.count
-            : groupedWindows ? applicationKeys.count : visibleWindows.count
+            : combined ? applicationKeys.count : visibleWindows.count
         let count = max(1, renderedCount)
         let width = (Double(available) - layout.itemSpacing * Double(count - 1)) / Double(count)
         return CGFloat(min(layout.maxItemWidth, max(layout.minItemWidth, width)))
@@ -158,10 +212,22 @@ struct TaskbarView: View {
             }.buttonStyle(.plain).help(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)
                 .accessibilityLabel("Launch \(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)")
                 .contextMenu { Button("Unpin") { settings.togglePin(path: path) } }
+                .draggable("taskpane-pin:\(path)")
+                .dropDestination(for: String.self) { values, _ in
+                    guard let value = values.first, value.hasPrefix("taskpane-pin:") else { return false }
+                    let source = String(value.dropFirst("taskpane-pin:".count))
+                    var pins = preferences.pinnedApplicationPaths
+                    guard source != path, pins.contains(source), pins.contains(path) else { return false }
+                    pins.removeAll { $0 == source }
+                    guard let index = pins.firstIndex(of: path) else { return false }
+                    pins.insert(source, at: index)
+                    settings.preferences.pinnedApplicationPaths = pins
+                    return true
+                }
         }
     }
 
-    @ViewBuilder private func windowButtons(width: CGFloat?) -> some View {
+    @ViewBuilder private func windowButtons(width: CGFloat?, combined: Bool) -> some View {
         if !windows.accessibilityGranted {
             ForEach(fallbackApplications) { app in
                 Button { windows.activateApp(pid: app.pid) } label: {
@@ -178,20 +244,48 @@ struct TaskbarView: View {
             }
         } else if visibleWindows.isEmpty {
             Text(vertical ? "—" : "No windows on this display").font(.system(size: 11)).foregroundStyle(.secondary)
-        } else if groupedWindows {
+        } else if combined {
             let groups = Dictionary(grouping: visibleWindows, by: \.arrangementKey)
             ForEach(applicationKeys, id: \.self) { key in
-                GroupedWindowButton(entries: groups[key] ?? [], windows: windows, preferences: preferences, vertical: vertical, width: width)
+                GroupedWindowButton(entries: groups[key] ?? [], windows: windows, settings: settings, vertical: vertical, width: width,
+                                    interactionChanged: { open in
+                    if open { presentedGroups.insert(key) } else { presentedGroups.remove(key) }
+                })
                     .draggable(key)
                     .dropDestination(for: String.self) { keys, _ in arrange(keys.first, before: key) }
             }
         } else {
             ForEach(visibleWindows) { entry in
-                WindowButton(entry: entry, windows: windows, preferences: preferences, vertical: vertical, width: width)
-                    .draggable(entry.arrangementKey)
-                    .dropDestination(for: String.self) { keys, _ in arrange(keys.first, before: entry.arrangementKey) }
+                WindowButton(entry: entry, windows: windows, settings: settings, vertical: vertical, width: width,
+                             order: visibleWindows.map { String($0.id) }, showSettings: showSettings, move: moveWindow)
+                    .draggable("taskpane-window:\(entry.id)")
+                    .dropDestination(for: String.self) { keys, _ in
+                        guard let key = keys.first, key.hasPrefix("taskpane-window:") else { return false }
+                        return moveWindow(String(key.dropFirst("taskpane-window:".count)), String(entry.id))
+                    }
             }
         }
+    }
+
+    @discardableResult private func moveWindow(_ id: String, _ target: String?) -> Bool {
+        let visible = visibleWindows
+        guard visible.contains(where: { String($0.id) == id }),
+              target.map({ value in visible.contains(where: { String($0.id) == value }) }) ?? true else { return false }
+        let entries = arrangedWindows
+        var sources = [id]
+        var destination = target
+        // Adjacent mode keeps independent buttons but moves an app's block
+        // across another app. Within one app, only the dragged window moves.
+        if preferences.grouping == .adjacent,
+           let selected = entries.first(where: { String($0.id) == id }),
+           let target, let other = entries.first(where: { String($0.id) == target }),
+           selected.arrangementKey != other.arrangementKey {
+            sources = entries.filter { $0.arrangementKey == selected.arrangementKey }.map { String($0.id) }
+            destination = entries.first(where: { $0.arrangementKey == other.arrangementKey }).map { String($0.id) } ?? target
+        }
+        let changed = windows.moveWindows(ids: sources, before: destination, currentOrder: entries.map { String($0.id) })
+        if changed { settings.preferences.layout.autoArrange = false }
+        return changed
     }
 
     private func arrange(_ key: String?, before target: String) -> Bool {
@@ -211,9 +305,14 @@ struct TaskbarView: View {
 struct WindowButton: View {
     let entry: WindowEntry
     @ObservedObject var windows: WindowService
-    let preferences: TaskPanePreferences
+    @ObservedObject var settings: SettingsStore
     let vertical: Bool
     var width: CGFloat? = nil
+    let order: [String]
+    let showSettings: () -> Void
+    let move: (String, String?) -> Bool
+    @ViewState private var hovered = false
+    private var preferences: TaskPanePreferences { settings.preferences }
     private var layout: LayoutCustomization { preferences.layout }
     var body: some View {
         Button { windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes) } label: {
@@ -226,20 +325,64 @@ struct WindowButton: View {
             }
             .padding(.horizontal, vertical ? 2 : 7)
             .frame(width: vertical ? nil : width, height: layout.itemHeight)
-            .background(Color.primary.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
+            .background(Color.primary.opacity(layout.itemOpacity + (hovered ? 0.07 : entry.isFocused ? 0.05 : 0)), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
             .overlay(alignment: .bottom) {
                 if layout.showActiveIndicator && entry.isFocused {
                     Capsule().fill(Color(taskPaneHex: preferences.accentHex)).frame(width: 20, height: 3)
                 }
             }
+            .opacity(entry.isMinimized ? 0.6 : 1)
         }
         .buttonStyle(.plain).help("\(entry.appName) · \(entry.title)")
         .accessibilityLabel("\(entry.appName): \(entry.title)")
+        .accessibilityValue(entry.isMinimized ? "Minimized" : entry.isFocused ? "Focused" : "Open")
+        .onHover { hovered = $0 }
         .contextMenu {
-            Button("Activate window") { windows.activate(entry) }
-            Button("Minimize window") { windows.minimize(entry) }
+            WindowContextCommands(entry: entry, windows: windows, settings: settings)
             Divider()
-            Button("Close window", role: .destructive) { windows.close(entry) }
+            let index = order.firstIndex(of: String(entry.id)) ?? 0
+            Button("Move earlier") { if index > 0 { _ = move(String(entry.id), order[index - 1]) } }
+                .disabled(index == 0)
+            Button("Move later") { if index + 1 < order.count { _ = move(order[index + 1], String(entry.id)) } }
+                .disabled(index + 1 >= order.count)
+            Divider()
+            Menu("TaskPane") {
+                Button("Settings…", action: showSettings)
+                Button("Refresh windows") { windows.refresh() }
+            }
+        }
+    }
+}
+
+struct WindowContextCommands: View {
+    let entry: WindowEntry
+    @ObservedObject var windows: WindowService
+    @ObservedObject var settings: SettingsStore
+    private var application: RunningAppEntry? {
+        guard windows.windows.contains(where: { $0.id == entry.id && $0.pid == entry.pid }) else { return nil }
+        return windows.apps.first { $0.pid == entry.pid && $0.bundleIdentifier == entry.bundleIdentifier }
+    }
+    var body: some View {
+        Text("Window · \(entry.appName)")
+        Button("Activate window") { windows.activate(entry) }
+        Button(entry.isMinimized ? "Restore window" : "Minimize window") {
+            if entry.isMinimized { windows.activate(entry) } else { windows.minimize(entry) }
+        }
+        Button("Toggle full screen") { windows.toggleFullscreen(entry) }
+        Button("Close window", role: .destructive) { windows.close(entry) }
+        Divider()
+        Text("Application")
+        if let path = application?.url?.path {
+            Button(settings.preferences.pinnedApplicationPaths.contains(path) ? "Remove from taskbar" : "Keep in taskbar") {
+                settings.togglePin(path: path)
+            }
+        }
+        if let application {
+            Button("Hide \(entry.appName)") { windows.hideApplication(application) }
+            Button("Quit \(entry.appName)") { windows.quitApplication(application) }
+        }
+        if let identifier = entry.bundleIdentifier {
+            Button("Exclude \(entry.appName) from taskbar") { settings.excludeApplication(identifier) }
         }
     }
 }
@@ -247,10 +390,12 @@ struct WindowButton: View {
 struct GroupedWindowButton: View {
     let entries: [WindowEntry]
     @ObservedObject var windows: WindowService
-    let preferences: TaskPanePreferences
+    @ObservedObject var settings: SettingsStore
     let vertical: Bool
     var width: CGFloat?
+    let interactionChanged: (Bool) -> Void
     @ViewState private var presented = false
+    private var preferences: TaskPanePreferences { settings.preferences }
     private var layout: LayoutCustomization { preferences.layout }
     var body: some View {
         Button {
@@ -271,11 +416,22 @@ struct GroupedWindowButton: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(entries.first?.appName ?? "Windows").font(.headline)
                     ForEach(entries) { entry in
-                        Button(entry.title.isEmpty ? "Untitled window" : entry.title) { windows.activate(entry); presented = false }
-                            .buttonStyle(.plain).lineLimit(1).padding(.vertical, 5)
+                        Button(entry.title.isEmpty ? "Untitled window" : entry.title) {
+                            windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes); presented = false
+                        }.buttonStyle(.plain).lineLimit(1).padding(.vertical, 5)
+                            .contextMenu { WindowContextCommands(entry: entry, windows: windows, settings: settings) }
                     }
                 }.padding(18).frame(minWidth: 240, maxWidth: 400)
             }
+            .contextMenu {
+                ForEach(entries) { entry in
+                    Menu(entry.title.isEmpty ? "Untitled window" : entry.title) {
+                        WindowContextCommands(entry: entry, windows: windows, settings: settings)
+                    }
+                }
+            }
+            .onChange(of: presented) { _, open in interactionChanged(open) }
+            .onDisappear { interactionChanged(false) }
     }
 }
 

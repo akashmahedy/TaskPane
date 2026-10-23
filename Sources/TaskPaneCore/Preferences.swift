@@ -19,13 +19,14 @@ public enum BarEdge: String, Codable, CaseIterable, Identifiable {
 }
 
 public enum GroupingMode: String, Codable, CaseIterable, Identifiable {
-    case never, always, automatic
+    case never, adjacent, always, automatic
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
         case .never: return "Separate windows"
-        case .always: return "Group by app"
-        case .automatic: return "Group when crowded"
+        case .adjacent: return "Keep app windows together"
+        case .always: return "Combine into app buttons"
+        case .automatic: return "Combine when space is needed"
         }
     }
 }
@@ -279,6 +280,20 @@ public struct TaskPanePreferences: Codable, Equatable {
 
     public init() {}
 
+    /// Changes window behavior without replacing the user's visual setup,
+    /// widgets, saved application order, pins or exclusions.
+    public func usingTaskbarBehavior() -> TaskPanePreferences {
+        var updated = self
+        updated.grouping = .adjacent
+        updated.showWindowTitles = true
+        updated.secondClickMinimizes = true
+        updated.currentDisplayOnly = false
+        updated.layout.showMinimizedWindows = true
+        updated.layout.showOffscreenWindows = true
+        updated.layout.autoArrange = false
+        return updated
+    }
+
     /// Checks a complete snapshot without changing it or touching any referenced files.
     public func validate() throws {
         guard schemaVersion == 1 else { throw PreferencesError.unsupportedSchemaVersion(schemaVersion) }
@@ -353,7 +368,7 @@ public enum BuiltInPreset: String, CaseIterable, Identifiable {
         switch self {
         case .balanced: return "A floating taskbar with readable titles and CPU/RAM graphs."
         case .windows: return "Full-width, square-edged taskbar with wide window buttons."
-        case .compact: return "A small floating app dock, with monitoring in the menu bar."
+        case .compact: return "A small floating window bar, with monitoring in the menu bar."
         case .monitoring: return "System readings in the menu bar, with the taskbar hidden."
         case .focus: return "A thin icon bar that hides automatically and keeps widgets off."
         }
@@ -400,7 +415,7 @@ public enum BuiltInPreset: String, CaseIterable, Identifiable {
             result.barHeight = 44
             result.iconSize = 24
             result.fontSize = 11
-            result.grouping = .always
+            result.grouping = .adjacent
             result.showWindowTitles = false
             result.showAppNames = false
             result.showClock = false
@@ -435,7 +450,7 @@ public enum BuiltInPreset: String, CaseIterable, Identifiable {
             result.barHeight = 36
             result.iconSize = 18
             result.fontSize = 10
-            result.grouping = .always
+            result.grouping = .adjacent
             result.showLauncher = false
             result.showWindowTitles = false
             result.showAppNames = false

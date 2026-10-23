@@ -30,9 +30,8 @@ final class TaskPaneAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
-        bars = TaskbarCoordinator(settings: settings, metrics: metrics, windows: windows,
-                                  showSettings: { [weak self] in self?.showSettings() },
-                                  showLauncher: { [weak self] in self?.showLauncher() })
+        bars = TaskbarCoordinator(settings: settings, metrics: metrics, windows: windows, launcher: launcher,
+                                  showSettings: { [weak self] in self?.showSettings() })
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.addItem(withTitle: "Open TaskPane", action: #selector(showSettings), keyEquivalent: ",").target = self

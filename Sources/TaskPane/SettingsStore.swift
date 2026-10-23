@@ -52,6 +52,17 @@ final class SettingsStore: ObservableObject {
         notice = "\(preset.displayName) applied. Your pins and excluded apps were kept."
     }
 
+    func useTaskbarBehavior() {
+        let updated = preferences.usingTaskbarBehavior()
+        do {
+            try updated.validate()
+            preferences = updated
+            notice = "Classic taskbar behavior applied. Your appearance, widgets, pins and saved application order were kept."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     @discardableResult func saveNow() -> Bool {
         pendingSave?.cancel()
         pendingSave = nil

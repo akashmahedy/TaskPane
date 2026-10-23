@@ -108,8 +108,8 @@ struct ArrangementSettingsView: View {
                     }.padding(.vertical, 4)
                 }
             }
-            Surface(title: "Application order", subtitle: "Keep automatic ordering or arrange application blocks yourself.") {
-                Toggle("Automatically arrange applications", isOn: $settings.preferences.layout.autoArrange).toggleStyle(.switch)
+            Surface(title: "Window & application order", subtitle: "Drag individual window buttons on the taskbar. Adjacent mode keeps each app's windows together.") {
+                Toggle("Use automatic ordering", isOn: $settings.preferences.layout.autoArrange).toggleStyle(.switch)
                 if layout.autoArrange {
                     SettingRow(title: "Sort by") {
                         Picker("Sort by", selection: $settings.preferences.layout.sortOrder) {
@@ -117,21 +117,31 @@ struct ArrangementSettingsView: View {
                         }.labelsHidden().frame(width: 180)
                     }
                 } else {
-                    Text("Drag an application button onto another on the taskbar, or use these buttons. Windows of each application stay together in manual order.")
+                    Text("Drag a window button onto another to change its position for this session. The controls below set the saved order of application blocks.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     ForEach(Array(applications.enumerated()), id: \.element.id) { index, app in
                         HStack(spacing: 10) {
                             Image(nsImage: AppIcons.icon(path: app.url?.path)).resizable().frame(width: 23, height: 23)
                             Text(app.name).font(.system(size: 12)); Spacer()
-                            Button { settings.moveApplication(key(app), direction: -1, currentOrder: applications.map(key)) } label: { Image(systemName: "chevron.up") }
+                            Button {
+                                windows.resetWindowOrder()
+                                settings.moveApplication(key(app), direction: -1, currentOrder: applications.map(key))
+                            } label: { Image(systemName: "chevron.up") }
                                 .disabled(index == 0).accessibilityLabel("Move \(app.name) earlier")
-                            Button { settings.moveApplication(key(app), direction: 1, currentOrder: applications.map(key)) } label: { Image(systemName: "chevron.down") }
+                            Button {
+                                windows.resetWindowOrder()
+                                settings.moveApplication(key(app), direction: 1, currentOrder: applications.map(key))
+                            } label: { Image(systemName: "chevron.down") }
                                 .disabled(index == applications.count - 1).accessibilityLabel("Move \(app.name) later")
                         }.padding(.vertical, 3)
                     }
+                    if !windows.manualWindowOrder.isEmpty {
+                        Button("Reset individual window order") { windows.resetWindowOrder() }
+                            .buttonStyle(.bordered)
+                    }
                 }
                 Divider()
-                Text("Application and section order are included in preferences export/import. Pinned applications have their own order in Taskbar.")
+                Text("Application and section order are included in preferences export/import. Individual window order lasts for this session. Pinned applications have their own order in Taskbar.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }

@@ -8,8 +8,8 @@ final class TaskbarCoordinator {
     private let settings: SettingsStore
     private let metrics: MetricsService
     private let windows: WindowService
+    private let launcher: LauncherService
     private let showSettings: () -> Void
-    private let showLauncher: () -> Void
     private var panels: [NSPanel] = []
     private var subscriptions = Set<AnyCancellable>()
     private var screenObserver: NSObjectProtocol?
@@ -17,11 +17,12 @@ final class TaskbarCoordinator {
     private var hideTimer: Timer?
     private var fullFrames: [NSRect] = []
     private var lastPointerInside: [ObjectIdentifier: Date] = [:]
+    private var expandedPanels = Set<ObjectIdentifier>()
 
-    init(settings: SettingsStore, metrics: MetricsService, windows: WindowService,
-         showSettings: @escaping () -> Void, showLauncher: @escaping () -> Void) {
-        self.settings = settings; self.metrics = metrics; self.windows = windows
-        self.showSettings = showSettings; self.showLauncher = showLauncher
+    init(settings: SettingsStore, metrics: MetricsService, windows: WindowService, launcher: LauncherService,
+         showSettings: @escaping () -> Void) {
+        self.settings = settings; self.metrics = metrics; self.windows = windows; self.launcher = launcher
+        self.showSettings = showSettings
         settings.$preferences.sink { [weak self] preferences in self?.layout(preferences) }.store(in: &subscriptions)
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                                 object: nil, queue: .main) { [weak self] _ in
@@ -42,6 +43,7 @@ final class TaskbarCoordinator {
         panels.removeAll()
         fullFrames.removeAll()
         lastPointerInside.removeAll()
+        expandedPanels.removeAll()
     }
 
     private func layout(_ preferences: TaskPanePreferences) {
@@ -85,9 +87,13 @@ final class TaskbarCoordinator {
             panel.hidesOnDeactivate = false
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
             panel.isReleasedWhenClosed = false
-            panel.contentView = NSHostingView(rootView: TaskbarView(settings: settings, metrics: metrics, windows: windows,
+            let identifier = ObjectIdentifier(panel)
+            panel.contentView = NSHostingView(rootView: TaskbarView(settings: settings, metrics: metrics, windows: windows, launcher: launcher,
                                                                   displayBounds: CGDisplayBounds(screenID), vertical: vertical,
-                                                                  showSettings: showSettings, showLauncher: showLauncher))
+                                                                  showSettings: showSettings, interactionChanged: { [weak self] expanded in
+                if expanded { self?.expandedPanels.insert(identifier) }
+                else { self?.expandedPanels.remove(identifier); self?.lastPointerInside[identifier] = Date() }
+            }))
             panel.orderFrontRegardless()
             panels.append(panel)
             fullFrames.append(rect)
@@ -102,7 +108,7 @@ final class TaskbarCoordinator {
             let identifier = ObjectIdentifier(panel)
             if panel.frame.contains(point) { lastPointerInside[identifier] = Date() }
             let lastInside = lastPointerInside[identifier] ?? .distantPast
-            let reveal = !settings.preferences.autoHide || panel.frame.contains(point) || Date().timeIntervalSince(lastInside) < 0.7
+            let reveal = !settings.preferences.autoHide || expandedPanels.contains(identifier) || panel.frame.contains(point) || Date().timeIntervalSince(lastInside) < 0.7
             var target = full
             if !reveal {
                 switch settings.preferences.barEdge {

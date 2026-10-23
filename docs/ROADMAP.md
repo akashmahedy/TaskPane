@@ -13,19 +13,20 @@ Native acceptance comes before claiming feature completion: compare the actual a
 
 ## Next reference-parity milestones
 
-These are planned gaps, not features already delivered by the alpha. The official reference website and current TaskPane source were compared on 2026-10-23.
+These milestones distinguish source implementations awaiting native acceptance from remaining gaps. The official reference website and TaskPane source were compared on 2026-10-23; [the reference behavior ledger](REFERENCE-BEHAVIOR.md) records the evidence boundaries. Implementing a control does not establish full reference parity.
 
 | Priority | Taskbar milestone | Current alpha boundary |
 | --- | --- | --- |
 | P0 | Native acceptance of exact-window count, activation, minimize, restore and close | Basic local two-window smoke accepted on `a9d292f`, including grouped second-click minimize/restore with dialogs disabled; broader inventory and app/platform coverage remains pending |
-| P1 | Drag individual windows freely; optionally keep the same app's windows adjacent without collapsing them | Dragging currently reorders application blocks; grouping collapses into an app button |
+| P1 | Drag individual windows freely; optionally keep the same app's windows adjacent without collapsing them | Implemented in source: session window ordering, adjacent separate buttons, app-block moves across apps in adjacent mode, and pin dragging. Physical drag/drop and broader native acceptance are pending. Explicit combine modes remain optional |
 | P1 | Current-Space, display and full-screen reliability | Visibility is a best-effort hint; it is not authoritative Space membership |
 | P1 | Hover window thumbnails with an optional, explicit capture permission | No thumbnail collector is implemented |
-| P1 | Start menu anchored to the clicked display, with pinned and recent apps plus search | The current searchable launcher is a separate centered window |
+| P1 | Start menu anchored to the clicked display, with pinned and recent apps plus search | Implemented in source as a bar-anchored popover with alphabetical headings, pinned apps, session recent apps, search and Escape dismissal; native placement, interaction and display coverage are pending |
+| P1 | Window and application context controls | Implemented in source: full-screen toggle, pin/unpin, hide, normal quit and exclude commands alongside activate/minimize/restore/close; new commands await native acceptance |
 | P2 | Optional overlap avoidance by resizing affected windows | Window geometry is read; automatic overlap resizing is not implemented |
-| P2 | Middle-click close and app-level context commands | Window context actions exist; these additional controls do not |
+| P2 | Middle-click close | No middle-click handler is implemented |
 
-Extend the accepted local P0 smoke test to broader inventory and app/platform coverage, then individual-window ordering and Spaces/display behavior, then thumbnails and the Start menu, followed by the P2 controls. The minimized-role correction requires prior verified standard-window identity; a newly discovered minimized dialog remains filtered when dialog display is disabled. A permission-dependent feature must retain a useful fallback when that permission is declined.
+Extend the accepted local P0 smoke test to broader inventory and app/platform coverage. Next validate the new window/adjacent-block and pin dragging with physical input, Start search/launch/dismissal and placement on each display, and full-screen/app menu actions. Repeat ordering checks through filtering and Space/full-screen/display transitions; these broader physical and Spaces checks remain pending. Then implement thumbnails and the P2 controls. The minimized-role correction requires prior verified standard-window identity; a newly discovered minimized dialog remains filtered when dialog display is disabled. A permission-dependent feature must retain a useful fallback when that permission is declined.
 
 ## 0.1 private alpha
 

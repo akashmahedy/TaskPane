@@ -8,15 +8,20 @@ The main product priority is Lawand Taskbar-style window behavior and customizat
 
 ## In this alpha
 
-- Individual verified window buttons, app grouping, activate/minimize/close controls and focused-window indicators.
-- Searchable application launcher, persistent pins, pin ordering, and app exclusions.
+These features are implemented in source. The latest grouping, drag, Start menu and expanded context-menu changes await native acceptance; full reference parity is not claimed.
+
+- Individual verified window buttons, with an adjacent mode that keeps each app's windows together without combining them. Explicit options can combine windows into app buttons always or when space is needed.
+- Activate, minimize, restore, close and full-screen controls, focused-window indicators, and app pin/unpin, hide, normal quit and exclusion commands.
+- Drag individual windows into a session order; adjacent mode moves an app's block when dragging across another app and individual windows within the same app. Drag pinned apps to reorder them.
+- Start popover anchored to the invoked taskbar, with search, an alphabetical app list, a pinned-app grid and recent apps from the current session.
+- Persistent pins and app exclusions; saved application, section and pin ordering.
 - Taskbar, menu bar, or combined mode; bottom/top/left/right edges and optional bars on all displays.
 - Auto-hide, per-display filtering and separate controls for minimized, off-screen and dialog windows.
 - Native CPU, memory, primary-interface network, internal-battery and clock widgets.
 - Per-widget placement: taskbar, menu bar, both, or off. CPU/memory sparklines in the taskbar.
 - System/light/dark appearance, accent color, bar transparency, icon/text sizes and item background opacity.
 - Fixed/adaptive item widths, minimum/maximum width, item height, spacing, corner radii and density shortcuts.
-- Bar length, edge distance, alignment and position offset; section ordering, automatic application/title/recent sorting and manual app order by drag or arrow buttons.
+- Bar length, edge distance, alignment and position offset; section ordering, automatic application/title/recent sorting and manual application ordering.
 - Five presets: Balanced, Windows style, Compact, Monitoring and Focus. Each has its own illustrated preview. Applying a preset preserves pins and exclusions. Fresh installations start with Windows style.
 - Automatic local preferences, versioned JSON export/import, strict validation and atomic writes.
 - Creator credit in the About screen and app footer.
@@ -54,6 +59,10 @@ Under load, previously verified row details can be reused for up to 12 seconds, 
 ## Preferences and backups
 
 Preferences are stored in `~/Library/Application Support/TaskPane/preferences.json`. **Backup → Export preferences** writes a portable JSON file. **Import preferences** validates the complete file, asks before replacing a valid setup, and persists it before updating the UI. Invalid files leave the current setup unchanged. An unreadable original settings file is retained; an explicit valid import preserves a separate copy before restoring it.
+
+**Use classic taskbar behavior** enables adjacent window buttons, window titles, focused-click minimize, minimized/off-screen windows, windows from all displays and manual ordering. It preserves appearance, widgets, pins, exclusions and saved application order, and resets the temporary individual-window order.
+
+Application, section and pin ordering are serialized with preferences. Individual-window identifiers and their manual order stay in the current TaskPane session and are not exported. Recent apps are kept in memory, bounded to 12 entries for the session, with no history file.
 
 Backups contain preferences and application paths, which may include a local username. Keep personal backups private. They never include passwords, screenshots or macOS permission grants. The import format is limited to 1 MiB and rejects unsupported versions, invalid ranges, duplicate widgets and unsafe application paths.
 

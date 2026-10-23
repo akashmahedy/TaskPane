@@ -247,7 +247,7 @@ struct PresetPreview: View {
         switch preset {
         case .balanced: return "Separate window titles and CPU and memory graphs along the bottom."
         case .windows: return "A full-width bottom taskbar with separate titled windows and a clock."
-        case .compact: return "A short centered dock of application icons, with monitoring in the top menu bar."
+        case .compact: return "A short centered bar with one icon per window, with monitoring in the top menu bar."
         case .monitoring: return "CPU, memory and network readings in the top menu bar. No taskbar."
         case .focus: return "A narrow bottom activation strip. Hover the preview to reveal a compact taskbar."
         }

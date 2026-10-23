@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Combine
 import CoreGraphics
+import TaskPaneCore
 
 struct WindowEntry: Identifiable, Sendable {
     /// A TaskPane session token, never a CGWindowID or a title-derived identity.
@@ -39,6 +40,15 @@ struct RunningAppEntry: Identifiable, Sendable {
     let name: String
     let bundleIdentifier: String?
     let url: URL?
+    fileprivate let processInstanceID: UUID
+
+    init(pid: Int32, name: String, bundleIdentifier: String?, url: URL?, processInstanceID: UUID = UUID()) {
+        self.pid = pid
+        self.name = name
+        self.bundleIdentifier = bundleIdentifier
+        self.url = url
+        self.processInstanceID = processInstanceID
+    }
 }
 
 /// Only verified Accessibility windows become rows. CG records cannot create a
@@ -50,6 +60,8 @@ final class WindowService: ObservableObject {
     @Published var recentApplicationPIDs: [Int32] = []
     @Published var accessibilityGranted = false
     @Published var lastActionMessage: String?
+    /// Exact session tokens only; window order is never serialized with titles.
+    @Published private(set) var manualWindowOrder: [String] = []
 
     private let worker = DispatchQueue(label: "app.taskpane.window-inspection", qos: .userInitiated)
     private let inspector = WindowInspector()
@@ -62,6 +74,12 @@ final class WindowService: ObservableObject {
     private var lifecycle = UUID()
     private var actionID: UUID?
     private var pendingActivation: (request: UUID, originalPID: Int32?, targetPID: Int32)?
+    private struct ApplicationInstance {
+        let application: NSRunningApplication
+        let token: UUID
+    }
+    private var applicationInstances: [Int32: ApplicationInstance] = [:]
+    private var knownWindowOrder: [String] = []
     private let permissionGuide = "Enable TaskPane in System Settings → Privacy & Security → Accessibility (Device Control and Data Access on macOS 27)."
 
     init() {
@@ -136,15 +154,26 @@ final class WindowService: ObservableObject {
         let trusted = accessibilityGranted
         let currentLifecycle = lifecycle
         let ownPID = ProcessInfo.processInfo.processIdentifier
-        let runningApps = NSWorkspace.shared.runningApplications.compactMap { application -> RunningAppEntry? in
-            guard application.processIdentifier != ownPID,
-                  application.activationPolicy == .regular,
-                  !application.isTerminated else { return nil }
+        let runningApplications = NSWorkspace.shared.runningApplications.filter {
+            $0.processIdentifier != ownPID && $0.activationPolicy == .regular && !$0.isTerminated
+        }
+        let runningInstances = runningApplications.reduce(into: [Int32: ApplicationInstance]()) { result, application in
+            let pid = application.processIdentifier
+            let token: UUID
+            if let previous = applicationInstances[pid], application.isEqual(previous.application) {
+                token = previous.token
+            } else {
+                token = UUID()
+            }
+            result[pid] = ApplicationInstance(application: application, token: token)
+        }
+        let runningApps = runningApplications.map { application in
             return RunningAppEntry(
                 pid: application.processIdentifier,
                 name: application.localizedName ?? application.bundleURL?.deletingPathExtension().lastPathComponent ?? "Application",
                 bundleIdentifier: application.bundleIdentifier,
-                url: application.bundleURL
+                url: application.bundleURL,
+                processInstanceID: runningInstances[application.processIdentifier]?.token ?? UUID()
             )
         }.sorted {
             let comparison = $0.name.localizedStandardCompare($1.name)
@@ -165,10 +194,22 @@ final class WindowService: ObservableObject {
         worker.async { [weak self] in
             guard workState.isActive else { return }
             let entries = inspector.enumerate(apps: runningApps, trusted: trusted, frontmostPID: frontmostPID)
+            let knownWindowIDs = inspector.knownWindowIDs
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped, self.lifecycle == currentLifecycle else { return }
+                self.applicationInstances = runningInstances
                 self.apps = runningApps
                 self.windows = entries
+                // Retained identity includes metadata-budget gaps and filtered
+                // windows. Only verified closure or identity loss prunes order.
+                self.knownWindowOrder = WindowArrangement.reconciled(
+                    self.knownWindowOrder, liveIDs: entries.map { String($0.id) } + knownWindowIDs
+                )
+                if !self.manualWindowOrder.isEmpty {
+                    self.manualWindowOrder = WindowArrangement.reconciled(
+                        self.manualWindowOrder, liveIDs: self.knownWindowOrder
+                    )
+                }
                 self.refreshInProgress = false
                 if self.refreshRequested {
                     self.refreshRequested = false
@@ -207,6 +248,85 @@ final class WindowService: ObservableObject {
 
     func minimize(_ entry: WindowEntry) { perform(.minimize, entry: entry) }
     func close(_ entry: WindowEntry) { perform(.close, entry: entry) }
+    func toggleFullscreen(_ entry: WindowEntry) { perform(.toggleFullscreen, entry: entry) }
+
+    func hideApplication(_ application: RunningAppEntry) { performApplicationCommand(.hide, application: application) }
+    func quitApplication(_ application: RunningAppEntry) { performApplicationCommand(.quit, application: application) }
+
+    /// currentOrder is the visible order after sorting/filtering. The helper
+    /// overlays those slots without discarding hidden live-window identities.
+    @discardableResult
+    func moveWindow(id: String, before target: String?, currentOrder: [String]) -> Bool {
+        guard !stopped,
+              let updated = WindowArrangement.moving(
+                id, before: target, currentOrder: currentOrder,
+                retainedOrder: manualWindowOrder.isEmpty ? knownWindowOrder : manualWindowOrder,
+                liveIDs: knownWindowOrder
+              ) else { return false }
+        manualWindowOrder = updated
+        return true
+    }
+
+    /// Moves an adjacent application's complete block as one transaction,
+    /// including its temporarily filtered live windows.
+    @discardableResult
+    func moveWindows(ids: [String], before target: String?, currentOrder: [String]) -> Bool {
+        guard !stopped,
+              let updated = WindowArrangement.movingBlock(
+                ids, before: target, currentOrder: currentOrder,
+                retainedOrder: manualWindowOrder.isEmpty ? knownWindowOrder : manualWindowOrder,
+                liveIDs: knownWindowOrder
+              ) else { return false }
+        manualWindowOrder = updated
+        return true
+    }
+
+    func resetWindowOrder() { manualWindowOrder = [] }
+
+    private enum ApplicationCommand {
+        case hide
+        case quit
+    }
+
+    private func performApplicationCommand(_ command: ApplicationCommand, application entry: RunningAppEntry) {
+        guard !stopped else { return }
+        let request = beginAction()
+        // NSRunningApplication explicitly recommends instance equality rather
+        // than PID equality. The captured menu entry must retain the same opaque
+        // process token even if refresh has replaced a reused PID in the map.
+        guard let expected = applicationInstances[entry.pid],
+              expected.token == entry.processInstanceID, !expected.application.isTerminated,
+              apps.contains(where: { $0.pid == entry.pid && $0.processInstanceID == entry.processInstanceID }),
+              let current = validApplication(pid: entry.pid), current.isEqual(expected.application),
+              current.bundleIdentifier == entry.bundleIdentifier,
+              current.bundleURL?.standardizedFileURL == entry.url?.standardizedFileURL else {
+            completeAction(request)
+            lastActionMessage = "This application's running instance changed. Refresh and try again."
+            refresh()
+            return
+        }
+        if let ownIdentifier = Bundle.main.bundleIdentifier, current.bundleIdentifier == ownIdentifier {
+            completeAction(request)
+            lastActionMessage = "Use TaskPane's own Quit command to close TaskPane."
+            return
+        }
+        let accepted: Bool
+        let operation: String
+        switch command {
+        case .hide:
+            accepted = current.hide()
+            operation = "Hide"
+        case .quit:
+            // A normal quit request permits the app to display unsaved-work
+            // prompts. It is never escalated to force termination or retried.
+            accepted = current.terminate()
+            operation = "Quit"
+        }
+        completeAction(request)
+        lastActionMessage = accepted ? "\(operation) requested for \(entry.name)."
+            : "macOS could not send the \(operation.lowercased()) request to \(entry.name)."
+        refresh()
+    }
 
     /// Cached rendering hint only. click() performs its own fresh focus check on
     /// the worker; this method does no AX IPC and never accesses the registry.
@@ -361,7 +481,7 @@ final class WindowService: ObservableObject {
         let targetPID: Int32?
         switch action {
         case .activate, .click: targetPID = entry.pid
-        case .minimize, .close: targetPID = nil
+        case .minimize, .close, .toggleFullscreen: targetPID = nil
         }
         let request = beginAction(activationTargetPID: targetPID)
         accessibilityGranted = AXIsProcessTrusted()
@@ -441,6 +561,7 @@ private final class WindowInspector: @unchecked Sendable {
         case activate
         case minimize
         case close
+        case toggleFullscreen
         case click(secondClickMinimizes: Bool)
     }
 
@@ -511,6 +632,10 @@ private final class WindowInspector: @unchecked Sendable {
     private let maximumWindowsPerApplication = 256
     private let maximumCachedSnapshotAge: TimeInterval = 12
     private let actionTimeout: Float = 1
+
+    /// Read only on the serial inspection queue. Failed metadata reads do not
+    /// erase a still-retained exact member; confirmed closure does.
+    var knownWindowIDs: [String] { retained.keys.sorted().map { String($0) } }
 
     func enumerate(apps: [RunningAppEntry], trusted: Bool, frontmostPID: Int32?) -> [WindowEntry] {
         guard trusted, AXIsProcessTrusted() else {
@@ -601,12 +726,12 @@ private final class WindowInspector: @unchecked Sendable {
     }
 
     func perform(_ requestedAction: Action, entry: WindowEntry, workState: WindowWorkState, request: UUID) -> Outcome {
-        // Explicit minimize/close commands remain queued commands. Newer user
+        // Explicit window controls remain queued commands. Newer user
         // intent cancels only older activation work and all older status output.
         let needsLatestIntent: Bool
         switch requestedAction {
         case .activate, .click: needsLatestIntent = true
-        case .minimize, .close: needsLatestIntent = false
+        case .minimize, .close, .toggleFullscreen: needsLatestIntent = false
         }
         func actionIsCurrent() -> Bool {
             workState.isActive && (!needsLatestIntent || workState.isCurrent(request))
@@ -703,6 +828,30 @@ private final class WindowInspector: @unchecked Sendable {
             }
             let result = AXUIElementPerformAction(button, kAXPressAction as CFString)
             return result == .success ? .success : .failure("macOS could not close this window (Accessibility error \(result.rawValue)).")
+        case .toggleFullscreen:
+            let attribute = "AXFullScreen"
+            var settable: DarwinBoolean = false
+            guard AXUIElementIsAttributeSettable(record.element, attribute as CFString, &settable) == .success,
+                  settable.boolValue else {
+                return .failure("This window does not expose a readable, settable full-screen state. No full-screen action was sent.")
+            }
+            guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid,
+                  let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+                  fresh.elements.contains(where: { CFEqual($0, record.element) }) else {
+                return .failure("The selected window is no longer available. No full-screen action was sent.")
+            }
+            guard let isFullscreen = booleanAttribute(record.element, attribute, timeout: actionTimeout, requiresBoolean: true) else {
+                return .failure("This window did not provide a Boolean full-screen state. No full-screen action was sent.")
+            }
+            guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
+                return .failure("Window action cancelled.")
+            }
+            let result = AXUIElementSetAttributeValue(
+                record.element, attribute as CFString, isFullscreen ? kCFBooleanFalse : kCFBooleanTrue
+            )
+            return result == .success
+                ? Outcome(message: "Full-screen change requested.", activateOwner: false)
+                : .failure("macOS could not change full-screen state (Accessibility error \(result.rawValue)).")
         case .click:
             return .failure("The window action could not be resolved.")
         }
@@ -831,10 +980,11 @@ private final class WindowInspector: @unchecked Sendable {
         return ((values[0] as? NSNumber)?.boolValue ?? false, focused)
     }
 
-    private func booleanAttribute(_ element: AXUIElement, _ attribute: String, timeout: Float) -> Bool? {
+    private func booleanAttribute(_ element: AXUIElement, _ attribute: String, timeout: Float, requiresBoolean: Bool = false) -> Bool? {
         AXUIElementSetMessagingTimeout(element, timeout)
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value, !requiresBoolean || CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
         return (value as? NSNumber)?.boolValue
     }
 

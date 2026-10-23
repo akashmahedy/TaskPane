@@ -12,12 +12,36 @@ struct LauncherEntry: Identifiable {
 final class LauncherService: ObservableObject {
     @Published var applications: [LauncherEntry] = []
     @Published private(set) var lastLaunchMessage: String?
+    @Published private(set) var recentApplications: [LauncherEntry] = []
 
     private let worker = DispatchQueue(label: "app.taskpane.application-index", qos: .utility)
     private var refreshing = false
     private var refreshRequested = false
+    private var activationObserver: NSObjectProtocol?
 
-    init() { refresh() }
+    init() {
+        refresh()
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.activationPolicy == .regular, app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+                  let url = app.bundleURL else { return }
+            let entry = LauncherEntry(name: app.localizedName ?? url.deletingPathExtension().lastPathComponent,
+                                      url: url, bundleIdentifier: app.bundleIdentifier)
+            Task { @MainActor [weak self] in self?.recordRecent(entry) }
+        }
+    }
+
+    deinit {
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+    }
+
+    private func recordRecent(_ entry: LauncherEntry) {
+        recentApplications.removeAll { $0.id == entry.id }
+        recentApplications.insert(entry, at: 0)
+        recentApplications = Array(recentApplications.prefix(12))
+    }
 
     func refresh() {
         if refreshing {
@@ -44,21 +68,27 @@ final class LauncherService: ObservableObject {
         }
     }
 
-    func launch(_ entry: LauncherEntry) {
+    func launch(_ entry: LauncherEntry, completion: ((Bool) -> Void)? = nil) {
         var isDirectory: ObjCBool = false
         guard entry.url.pathExtension.caseInsensitiveCompare("app") == .orderedSame,
               FileManager.default.fileExists(atPath: entry.url.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
             lastLaunchMessage = "This application is no longer installed. Refresh the app list."
+            completion?(false)
             return
         }
         lastLaunchMessage = nil
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         NSWorkspace.shared.openApplication(at: entry.url, configuration: configuration) { [weak self] _, error in
-            guard let error else { return }
             Task { @MainActor [weak self] in
-                self?.lastLaunchMessage = "Could not open \(entry.name): \(error.localizedDescription)"
+                if let error {
+                    self?.lastLaunchMessage = "Could not open \(entry.name): \(error.localizedDescription)"
+                    completion?(false)
+                } else {
+                    self?.recordRecent(entry)
+                    completion?(true)
+                }
             }
         }
     }

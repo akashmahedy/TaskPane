@@ -247,11 +247,12 @@ struct PreferencesTests {
         let compact = BuiltInPreset.compact.preferences
         #expect(compact.layout.lengthPercent == 62)
         #expect(compact.layout.alignment == .center)
-        #expect(compact.grouping == .always && !compact.showWindowTitles && !compact.showAppNames)
+        #expect(compact.grouping == .adjacent && !compact.showWindowTitles && !compact.showAppNames)
         let monitoring = BuiltInPreset.monitoring.preferences
         #expect(monitoring.appMode == .menubar)
         #expect(monitoring.widgets.allSatisfy { $0.placement == .menubar })
         let focus = BuiltInPreset.focus.preferences
+        #expect(focus.grouping == .adjacent)
         #expect(focus.autoHide && !focus.showWindowTitles && !focus.showAppNames)
         #expect(focus.barHeight < compact.barHeight)
         #expect(focus.layout.lengthPercent < compact.layout.lengthPercent)
@@ -322,6 +323,68 @@ struct PreferencesTests {
         #expect(actual.layout.applicationOrder == ["A", "C", "B"])
         #expect(!actual.layout.autoArrange)
         #expect(actual == preferences)
+    }
+
+    @Test func legacyGroupingValuesKeepTheirSavedMeaning() throws {
+        let valid = try PreferencesBackup.encode(BuiltInPreset.compact.preferences)
+        for (raw, expected) in [("never", GroupingMode.never), ("always", .always), ("automatic", .automatic)] {
+            let legacy = try modified(valid) { envelope in
+                var preferences = envelope["preferences"] as! [String: Any]
+                preferences["grouping"] = raw
+                envelope["preferences"] = preferences
+            }
+            let restored = try PreferencesBackup.decode(legacy)
+            #expect(restored.grouping == expected)
+            #expect(!restored.showWindowTitles)
+            #expect(restored.layout == BuiltInPreset.compact.preferences.layout)
+        }
+    }
+
+    @Test func adjacentGroupingPreservesCustomizationInBackup() throws {
+        var preferences = BuiltInPreset.balanced.preferences
+        preferences.grouping = .adjacent
+        preferences.layout.applicationOrder = ["com.example.Editor", "com.apple.Safari"]
+        preferences.layout.autoArrange = false
+        preferences.layout.sectionOrder.reverse()
+        preferences.pinnedApplicationPaths = ["/Applications/Safari.app"]
+        preferences.excludedBundleIdentifiers = ["com.example.Hidden"]
+        #expect(try PreferencesBackup.decode(PreferencesBackup.encode(preferences)) == preferences)
+    }
+
+    @Test func classicBehaviorPreservesTheRestOfTheSetup() throws {
+        var original = BuiltInPreset.compact.preferences
+        original.grouping = .always
+        original.showWindowTitles = false
+        original.secondClickMinimizes = false
+        original.currentDisplayOnly = true
+        original.autoHide = true
+        original.theme = .dark
+        original.barEdge = .left
+        original.accentHex = "15aB72"
+        original.layout.autoArrange = true
+        original.layout.showMinimizedWindows = false
+        original.layout.showOffscreenWindows = false
+        original.layout.showDialogs = true
+        original.layout.applicationOrder = ["com.apple.Safari", "com.example.Editor"]
+        original.layout.sectionOrder.reverse()
+        original.layout.alongEdgeOffset = 123
+        original.pinnedApplicationPaths = ["/Applications/Safari.app"]
+        original.excludedBundleIdentifiers = ["com.example.Hidden"]
+        original.widgets.reverse()
+
+        var expected = original
+        expected.grouping = .adjacent
+        expected.showWindowTitles = true
+        expected.secondClickMinimizes = true
+        expected.currentDisplayOnly = false
+        expected.layout.autoArrange = false
+        expected.layout.showMinimizedWindows = true
+        expected.layout.showOffscreenWindows = true
+        let actual = original.usingTaskbarBehavior()
+        #expect(actual == expected)
+        #expect(original.grouping == .always)
+        #expect(actual.usingTaskbarBehavior() == actual)
+        #expect(try PreferencesBackup.decode(PreferencesBackup.encode(actual)) == actual)
     }
 
     private func modified(_ data: Data, change: (inout [String: Any]) -> Void) throws -> Data {
