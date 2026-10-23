@@ -17,7 +17,7 @@ These are planned gaps, not features already delivered by the alpha. The officia
 
 | Priority | Taskbar milestone | Current alpha boundary |
 | --- | --- | --- |
-| P0 | Native acceptance of exact-window count, activation, minimize, restore and close | Final GUI permission repair and native tests are pending |
+| P0 | Native acceptance of exact-window count, activation, minimize, restore and close | Standalone permission is connected; basic fixture actions were observed, but foreground focus and repeatable final-binary acceptance remain open |
 | P1 | Drag individual windows freely; optionally keep the same app's windows adjacent without collapsing them | Dragging currently reorders application blocks; grouping collapses into an app button |
 | P1 | Current-Space, display and full-screen reliability | Visibility is a best-effort hint; it is not authoritative Space membership |
 | P1 | Hover window thumbnails with an optional, explicit capture permission | No thumbnail collector is implemented |
