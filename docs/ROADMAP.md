@@ -17,7 +17,7 @@ These are planned gaps, not features already delivered by the alpha. The officia
 
 | Priority | Taskbar milestone | Current alpha boundary |
 | --- | --- | --- |
-| P0 | Native acceptance of exact-window count, activation, minimize, restore and close | Standalone permission and real foreground handoff are verified; controlled final-binary window-control and inventory-continuity acceptance remains underway |
+| P0 | Native acceptance of exact-window count, activation, minimize, restore and close | Basic local two-window smoke accepted on `a9d292f`, including grouped second-click minimize/restore with dialogs disabled; broader inventory and app/platform coverage remains pending |
 | P1 | Drag individual windows freely; optionally keep the same app's windows adjacent without collapsing them | Dragging currently reorders application blocks; grouping collapses into an app button |
 | P1 | Current-Space, display and full-screen reliability | Visibility is a best-effort hint; it is not authoritative Space membership |
 | P1 | Hover window thumbnails with an optional, explicit capture permission | No thumbnail collector is implemented |
@@ -25,7 +25,7 @@ These are planned gaps, not features already delivered by the alpha. The officia
 | P2 | Optional overlap avoidance by resizing affected windows | Window geometry is read; automatic overlap resizing is not implemented |
 | P2 | Middle-click close and app-level context commands | Window context actions exist; these additional controls do not |
 
-Finish P0, then individual-window ordering and Spaces/display behavior, then thumbnails and the Start menu, followed by the P2 controls. A permission-dependent feature must retain a useful fallback when that permission is declined.
+Extend the accepted local P0 smoke test to broader inventory and app/platform coverage, then individual-window ordering and Spaces/display behavior, then thumbnails and the Start menu, followed by the P2 controls. The minimized-role correction requires prior verified standard-window identity; a newly discovered minimized dialog remains filtered when dialog display is disabled. A permission-dependent feature must retain a useful fallback when that permission is declined.
 
 ## 0.1 private alpha
 

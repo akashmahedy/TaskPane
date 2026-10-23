@@ -18,16 +18,18 @@ Swift 6 / Swift 5 language mode, macOS 14 deployment target. Local runtime targe
 
 ## Latest native window-control checks
 
-Source commit: `0c951d7`. Release executable SHA-256: `d32c23773e2a57c9ce161cfec5f0560c21f64d6847053d9acf7ba6958f4e1ed5`. The running bundle, packaged bundle and ZIP contain the same executable. The release build, signature check, all 24 tests and GitHub CI passed after the Workspace activation correction.
+Source commit: `a9d292f`. Release executable SHA-256: `9627e2846395c19f713e8c73b9bd005f3ffcd8555c55ca8667652a1c5318affa`. The running bundle, packaged bundle and ZIP contain the same executable. The release build, signature check and all 24 tests passed. [GitHub CI run 39949068869](https://github.com/akashmahedy/TaskPane/actions/runs/39949068869) also passed.
 
-The standalone GUI showed Accessibility **Connected**, including after a same-binary restart. AnyDesk appeared once in its application search. Two disposable TextEdit documents appeared as separate rows. Minimizing the selected document left the other available; restoring it raised the exact document without the previous restore timeout.
+The basic local P0 window-control smoke test is accepted on this build:
 
-Foreground activation is now verified on this build: a read-only timeline captured a real foreground transition from another application to TextEdit, the selected fixture was active, and TaskPane completed its focus check without an activation error. This follows a manual mouse-click confirmation of the earlier build's focus bug. The fix uses the public Workspace activation broker, then raises and verifies the exact selected window.
+- The standalone GUI showed Accessibility **Connected**, including after a same-binary restart. AnyDesk appeared as one application button. Two disposable TextEdit documents appeared as separate window rows.
+- Minimizing document A changed only A to minimized; its raw subrole became `AXDialog` while B remained unminimized. Restoring A returned it to unminimized state with TextEdit globally foreground. Closing A left only B.
+- In the grouped taskbar, the first click activated B; a second click while B was focused minimized it. B again reported raw `AXDialog`. With dialog display disabled, its taskbar button remained available after approximately nine seconds of refreshes.
+- Clicking that same taskbar button restored B to unminimized state with TextEdit globally foreground. Closing B left no test-document rows.
+- The temporary change to `currentDisplayOnly` was restored to `true`. The user's Compact preset and always-grouped preference were preserved.
 
-During interactive GUI testing, fixture rows temporarily disappeared before returning while settings/window context was also changing. A separate read-only integration run of the unchanged inventory engine retained both exact fixture identities through 12 settled samples. That different launch context does not establish standalone GUI inventory continuity.
-
-Final acceptance still requires controlled inventory continuity, repeat minimize/restore/close verification on this binary and taskbar second-click minimize/restore. Closing only the selected fixture while preserving another was verified on a preceding build; it is not counted as a pass for this final executable. Runtime success is not inferred from compilation or static review.
+The public Workspace broker and exact AX focus readback were exercised in these native actions. This passes the local two-window smoke test, including the minimized-role regression; it does not establish exhaustive inventory continuity or full reference-app parity.
 
 ## Unverified scenarios
 
-Physical display unplug/replug, real sleep/wake, Intel hardware, every supported macOS version, all third-party app window implementations and exhaustive Spaces/full-screen behavior require later testing. Native actions deliberately refuse ambiguous matches.
+Broader inventory continuity, renamed/hidden windows, physical display unplug/replug, real sleep/wake, Intel hardware, every supported macOS version, other third-party app window implementations and exhaustive Spaces/full-screen behavior require later testing. A newly discovered minimized dialog without prior verified standard-window identity remains filtered when dialog display is disabled. Native actions deliberately refuse ambiguous matches.

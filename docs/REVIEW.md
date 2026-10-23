@@ -59,6 +59,6 @@ Native testing exposed a TextEdit regression: a previously verified standard doc
 - Action-time normalization occurs after fresh role, owner and exact membership checks, before caching minimize/restore transitions. Cached restore state therefore retains the same verified presentation without changing the action target.
 - Newly discovered dialogs, newly discovered minimized dialogs, `AXSystemDialog` windows and fresh nonminimized `AXDialog` snapshots remain dialogs. The change does not relax eligible-role or action-identity checks.
 
-The independent review found no confirmed blocker. Native taskbar minimize/restore validation with dialog display disabled is pending for this fix; source review does not establish a runtime pass.
+The independent review found no confirmed blocker. Native testing on `a9d292f` then passed grouped taskbar minimize/restore with dialog display disabled: the same button remained available through approximately nine seconds of refreshes and restored the selected window with its application foreground. The basic local P0 smoke test is accepted; broader inventory and app/platform coverage remains pending. See [VALIDATION.md](VALIDATION.md) for the tested executable and scope.
 
 Resolved findings were re-read and relevant tests/builds rerun. Native validation and remaining platform limits are recorded in [VALIDATION.md](VALIDATION.md). This review is not a guarantee that every third-party app or macOS version behaves identically.
