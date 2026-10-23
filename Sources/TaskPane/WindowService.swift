@@ -476,10 +476,19 @@ private final class WindowInspector: @unchecked Sendable {
         let title: String?
         let bounds: CGRect
         let minimized: Bool
+        let subrole: String
         let isDialog: Bool
 
         func settingMinimized(_ minimized: Bool) -> WindowSnapshot {
-            WindowSnapshot(title: title, bounds: bounds, minimized: minimized, isDialog: isDialog)
+            WindowSnapshot(title: title, bounds: bounds, minimized: minimized, subrole: subrole, isDialog: isDialog)
+        }
+
+        func preservingStandardPresentation(from previous: WindowSnapshot?) -> WindowSnapshot {
+            // Some apps report a standard document as AXDialog while minimized.
+            // Only the same retained member's verified classification can carry
+            // forward; a newly discovered dialog remains a dialog.
+            guard minimized, subrole == "AXDialog", previous?.isDialog == false else { return self }
+            return WindowSnapshot(title: title, bounds: bounds, minimized: minimized, subrole: subrole, isDialog: false)
         }
     }
 
@@ -553,7 +562,7 @@ private final class WindowInspector: @unchecked Sendable {
                 let sampledAt: TimeInterval
                 switch read {
                 case .verified(let fresh):
-                    snapshot = fresh
+                    snapshot = fresh.preservingStandardPresentation(from: previous?.value.snapshot)
                     sampledAt = ProcessInfo.processInfo.systemUptime
                 case .unavailable:
                     // Cached presentation is allowed only for this exact member
@@ -618,10 +627,11 @@ private final class WindowInspector: @unchecked Sendable {
             retained.removeValue(forKey: entry.id)
             return .failure("The selected window has closed or is unavailable. No action was sent.")
         }
-        guard let current = snapshot(of: record.element, timeout: actionTimeout),
+        guard let fresh = snapshot(of: record.element, timeout: actionTimeout),
               owner(of: record.element) == entry.pid else {
             return .failure("The selected window could not be verified. No action was sent.")
         }
+        let current = fresh.preservingStandardPresentation(from: record.snapshot)
         cache(current, for: entry.id, record: record)
 
         let action: Action
@@ -806,7 +816,7 @@ private final class WindowInspector: @unchecked Sendable {
               size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return .unavailable }
         return .verified(WindowSnapshot(
             title: Self.nonempty(values[2] as? String), bounds: CGRect(origin: position, size: size),
-            minimized: minimized, isDialog: dialog
+            minimized: minimized, subrole: subrole, isDialog: dialog
         ))
     }
 

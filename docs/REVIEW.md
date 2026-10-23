@@ -51,4 +51,14 @@ Standalone GUI testing with two disposable windows confirmed separate rows, mini
 - A bounded readback requires both application frontmost state and an exact `AXFocusedWindow` match. The main thread also confirms the foreground process before reporting success.
 - New TaskPane actions cancel stale activation work and delayed status updates. A foreground change to an unrelated application also cancels the pending activation. Explicit queued minimize/close commands retain their separate identity checks and are not dropped by a later command. Close is still sent only once.
 
+## Minimized-window classification follow-up
+
+Native testing exposed a TextEdit regression: a previously verified standard document window reported `AXDialog` after being minimized. With dialog display disabled, its taskbar button disappeared on the next refresh, preventing restore from the bar. OCR delegation selected one file (`WindowService.swift`); the implementation and independent Codex review covered the complete change and its callers: 1 selected, 1 reviewed, 0 skipped.
+
+- A fresh minimized `AXDialog` snapshot retains standard-window presentation only when the previous verified classification belongs to the same process and exact `CFEqual` AX member in the current window list. Fresh title, bounds and minimized state are preserved.
+- Action-time normalization occurs after fresh role, owner and exact membership checks, before caching minimize/restore transitions. Cached restore state therefore retains the same verified presentation without changing the action target.
+- Newly discovered dialogs, newly discovered minimized dialogs, `AXSystemDialog` windows and fresh nonminimized `AXDialog` snapshots remain dialogs. The change does not relax eligible-role or action-identity checks.
+
+The independent review found no confirmed blocker. Native taskbar minimize/restore validation with dialog display disabled is pending for this fix; source review does not establish a runtime pass.
+
 Resolved findings were re-read and relevant tests/builds rerun. Native validation and remaining platform limits are recorded in [VALIDATION.md](VALIDATION.md). This review is not a guarantee that every third-party app or macOS version behaves identically.
