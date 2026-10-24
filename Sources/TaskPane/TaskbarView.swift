@@ -36,7 +36,9 @@ struct TaskbarView: View {
             (!preferences.currentDisplayOnly || displayBounds.contains(CGPoint(x: entry.bounds.midX, y: entry.bounds.midY))) &&
             (layout.showMinimizedWindows || !entry.isMinimized) &&
             (layout.showDialogs || !entry.isDialog) &&
-            (layout.showOffscreenWindows || ((options.nativeSpaceTracking ? entry.isOnCurrentSpace : nil) ?? (entry.isOnScreen || entry.isMinimized || entry.isHidden)))
+            WindowVisibility.admits(showOffscreen: layout.showOffscreenWindows,
+                                    onCurrentSpace: options.nativeSpaceTracking ? entry.isOnCurrentSpace : nil,
+                                    onScreen: entry.isOnScreen, minimized: entry.isMinimized, hidden: entry.isHidden)
         }
     }
     /// Arrange before filtering so a hidden sibling cannot change its app's
