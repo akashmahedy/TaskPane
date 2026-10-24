@@ -94,7 +94,10 @@ final class SettingsStore: ObservableObject {
     func importPreferences() {
         let panel = NSOpenPanel()
         panel.title = "Import TaskPane preferences"
-        panel.allowedContentTypes = [.json]
+        // Copies made on another volume or Mac can be classified as plain text.
+        // The complete versioned JSON is still size-limited, decoded and validated
+        // before the confirmation or any preference replacement.
+        panel.allowedContentTypes = [.json, .plainText]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
