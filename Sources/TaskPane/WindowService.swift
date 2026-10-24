@@ -895,21 +895,7 @@ private final class WindowInspector: @unchecked Sendable {
             }
             var activationElement = record.element
             if entry.isNativeTab {
-                guard actionIsCurrent(), tabs.select(entry) else {
-                    return .failure("This tab could not accept selection. Refresh and try again.")
-                }
-                let selectionDeadline = ProcessInfo.processInfo.systemUptime + 1
-                var selectedHost: AXUIElement?
-                repeat {
-                    guard actionIsCurrent(), AXIsProcessTrusted() else { return .failure("Tab activation cancelled.") }
-                    if let fresh = applicationWindows(pid: entry.pid, timeout: 0.15),
-                       let selected = tabs.window(for: entry, in: fresh.elements), tabs.isSelected(entry) {
-                        selectedHost = selected
-                        break
-                    }
-                    if ProcessInfo.processInfo.systemUptime < selectionDeadline { Thread.sleep(forTimeInterval: 0.05) }
-                } while ProcessInfo.processInfo.systemUptime < selectionDeadline
-                guard let selectedHost, actionIsCurrent() else {
+                guard let selectedHost = selectTabHost(entry, isCurrent: actionIsCurrent) else {
                     return .failure("The selected tab changed or could not be verified. Refresh and try again.")
                 }
                 activationElement = selectedHost
@@ -948,8 +934,22 @@ private final class WindowInspector: @unchecked Sendable {
             return .failure("macOS could not minimize this window (Accessibility error \(result.rawValue)).")
         case .close:
             if entry.isNativeTab {
-                let result = tabs.close(entry)
-                return result == .success ? .success : .failure("This tab does not expose an available close control (Accessibility error \(result.rawValue)).")
+                guard let selectedHost = selectTabHost(entry, isCurrent: actionIsCurrent), actionIsCurrent(),
+                      let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+                      tabs.window(for: entry, in: fresh.elements).map({ CFEqual($0, selectedHost) }) == true else {
+                    return .failure("The selected tab could not be verified. No close command was sent.")
+                }
+                let result = tabs.close(entry, application: fresh.application, expectedWindow: selectedHost)
+                guard result == .success || result == .cannotComplete else {
+                    return .failure("This tab does not expose an available close command (Accessibility error \(result.rawValue)).")
+                }
+                let deadline = ProcessInfo.processInfo.systemUptime + 1
+                repeat {
+                    guard actionIsCurrent(), AXIsProcessTrusted() else { return .failure("Tab close verification cancelled.") }
+                    if let current = applicationWindows(pid: entry.pid, timeout: 0.15), tabs.window(for: entry, in: current.elements) == nil { return .success }
+                    if ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.05) }
+                } while ProcessInfo.processInfo.systemUptime < deadline
+                return .failure("The application did not confirm that the tab closed. No additional close command was sent.")
             }
             guard let button = elementAttribute(record.element, kAXCloseButtonAttribute, timeout: actionTimeout),
                   owner(of: button) == entry.pid else {
@@ -1078,6 +1078,18 @@ private final class WindowInspector: @unchecked Sendable {
             return failure("The application is active, but the selected window did not gain keyboard focus\(detail). Try Activate again.")
         }
         return failure("macOS did not give this application foreground focus. Try Activate again.")
+    }
+
+    private func selectTabHost(_ entry: WindowEntry, isCurrent: () -> Bool) -> AXUIElement? {
+        guard isCurrent(), AXIsProcessTrusted(), tabs.select(entry) else { return nil }
+        let deadline = ProcessInfo.processInfo.systemUptime + 1
+        repeat {
+            guard isCurrent(), AXIsProcessTrusted() else { return nil }
+            if let fresh = applicationWindows(pid: entry.pid, timeout: 0.15),
+               let host = tabs.window(for: entry, in: fresh.elements), tabs.isSelected(entry) { return host }
+            if ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return nil
     }
 
     private func actionRecord(_ entry: WindowEntry, inventory: ApplicationInventory) -> RetainedWindow? {

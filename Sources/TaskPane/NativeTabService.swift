@@ -96,14 +96,51 @@ final class NativeTabService {
         return result == .success || result == .cannotComplete
     }
 
-    func close(_ entry: WindowEntry) -> AXError {
-        guard let tab = retained[entry.id], tab.pid == entry.pid, isTab(tab.button, pid: entry.pid) else { return .invalidUIElement }
+    func close(_ entry: WindowEntry, application: AXUIElement, expectedWindow: AXUIElement) -> AXError {
+        guard let tab = retained[entry.id], tab.pid == entry.pid, isTab(tab.button, pid: entry.pid),
+              selected(tab.button), let focused = element(application, kAXFocusedWindowAttribute),
+              CFEqual(focused, expectedWindow) else { return .invalidUIElement }
+        // macOS 27 can acknowledge AXPress on a tab's close affordance without
+        // closing it. Prefer the explicit native Close Tab menu command when its
+        // English label and unmodified Command-W binding both verify its meaning.
+        // Never use Close Window, Close Other Tabs, or a synthetic keyboard event.
+        if let command = closeTabCommand(application, pid: entry.pid), selected(tab.button),
+           let focused = element(application, kAXFocusedWindowAttribute), CFEqual(focused, expectedWindow) {
+            AXUIElementSetMessagingTimeout(command, 0.5)
+            return AXUIElementPerformAction(command, kAXPressAction as CFString)
+        }
         // Standard AppKit AXTabButton exposes its own sole direct close button.
         // Never fall back to the window traffic light or an app keyboard shortcut.
         let buttons = children(tab.button).filter { string($0, kAXRoleAttribute) == kAXButtonRole && owner($0) == entry.pid }
         guard buttons.count == 1, let close = buttons.first else { return .actionUnsupported }
         AXUIElementSetMessagingTimeout(close, 0.5)
         return AXUIElementPerformAction(close, kAXPressAction as CFString)
+    }
+
+    private func closeTabCommand(_ application: AXUIElement, pid: Int32) -> AXUIElement? {
+        guard let bar = element(application, kAXMenuBarAttribute) else { return nil }
+        let deadline = ProcessInfo.processInfo.systemUptime + 1
+        var matches: [AXUIElement] = []
+        for top in children(bar) {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+            for menu in children(top) {
+                guard string(menu, kAXRoleAttribute) == kAXMenuRole else { continue }
+                for item in children(menu) {
+                    guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+                    guard owner(item) == pid, string(item, kAXRoleAttribute) == kAXMenuItemRole,
+                          string(item, kAXTitleAttribute) == "Close Tab",
+                          string(item, "AXMenuItemCmdChar")?.uppercased() == "W",
+                          (attribute(item, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue == 0,
+                          (attribute(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == true else { continue }
+                    matches.append(item)
+                }
+            }
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+    private func element(_ e: AXUIElement, _ key: String) -> AXUIElement? {
+        guard let value = attribute(e, key), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(value, to: AXUIElement.self)
     }
 
     private func same(_ a: Tab, _ b: Tab) -> Bool { a.pid == b.pid && CFEqual(a.group, b.group) && CFEqual(a.button, b.button) }
