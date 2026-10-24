@@ -17,10 +17,18 @@ struct WindowEntry: Identifiable, Sendable {
     let isOnScreen: Bool
     let isDialog: Bool
     let isFocused: Bool
+    let isHidden: Bool
+    let isFullscreen: Bool
+    /// Unique CG presentation match, used only for optional thumbnails; never action identity.
+    let captureWindowID: CGWindowID?
+    let isOnCurrentSpace: Bool?
+    let isOnAllSpaces: Bool
 
     init(id: UInt32, pid: Int32, title: String, appName: String,
          bundleIdentifier: String?, bounds: CGRect, isMinimized: Bool,
-         isOnScreen: Bool, isDialog: Bool = false, isFocused: Bool = false) {
+         isOnScreen: Bool, isDialog: Bool = false, isFocused: Bool = false,
+         isHidden: Bool = false, isFullscreen: Bool = false, captureWindowID: CGWindowID? = nil,
+         isOnCurrentSpace: Bool? = nil, isOnAllSpaces: Bool = false) {
         self.id = id
         self.pid = pid
         self.title = title
@@ -31,6 +39,11 @@ struct WindowEntry: Identifiable, Sendable {
         self.isOnScreen = isOnScreen
         self.isDialog = isDialog
         self.isFocused = isFocused
+        self.isHidden = isHidden
+        self.isFullscreen = isFullscreen
+        self.captureWindowID = captureWindowID
+        self.isOnCurrentSpace = isOnCurrentSpace
+        self.isOnAllSpaces = isOnAllSpaces
     }
 }
 
@@ -66,6 +79,7 @@ final class WindowService: ObservableObject {
     private let worker = DispatchQueue(label: "app.taskpane.window-inspection", qos: .userInitiated)
     private let inspector = WindowInspector()
     private let workState = WindowWorkState()
+    private var nativeSpaceTracking = true
     private var timer: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var refreshInProgress = false
@@ -152,6 +166,7 @@ final class WindowService: ObservableObject {
         }
         refreshInProgress = true
         let trusted = accessibilityGranted
+        let trackSpaces = nativeSpaceTracking
         let currentLifecycle = lifecycle
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let runningApplications = NSWorkspace.shared.runningApplications.filter {
@@ -193,7 +208,7 @@ final class WindowService: ObservableObject {
         let workState = workState
         worker.async { [weak self] in
             guard workState.isActive else { return }
-            let entries = inspector.enumerate(apps: runningApps, trusted: trusted, frontmostPID: frontmostPID)
+            let entries = inspector.enumerate(apps: runningApps, trusted: trusted, frontmostPID: frontmostPID, trackSpaces: trackSpaces)
             let knownWindowIDs = inspector.knownWindowIDs
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped, self.lifecycle == currentLifecycle else { return }
@@ -219,6 +234,12 @@ final class WindowService: ObservableObject {
         }
     }
 
+    func configureSpaceTracking(enabled: Bool) {
+        guard nativeSpaceTracking != enabled else { return }
+        nativeSpaceTracking = enabled
+        refresh()
+    }
+
     /// Called only by an explicit onboarding/settings button.
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -239,11 +260,11 @@ final class WindowService: ObservableObject {
         perform(.activate, entry: entry)
     }
 
-    func click(_ entry: WindowEntry, secondClickMinimizes: Bool) {
+    func click(_ entry: WindowEntry, secondClickMinimizes: Bool, hideApplication: Bool = false) {
         guard !stopped else { return }
         accessibilityGranted = AXIsProcessTrusted()
         guard accessibilityGranted else { activate(entry); return }
-        perform(.click(secondClickMinimizes: secondClickMinimizes), entry: entry)
+        perform(.click(secondClickMinimizes: secondClickMinimizes, hideApplication: hideApplication), entry: entry)
     }
 
     func minimize(_ entry: WindowEntry) { perform(.minimize, entry: entry) }
@@ -282,6 +303,30 @@ final class WindowService: ObservableObject {
     }
 
     func resetWindowOrder() { manualWindowOrder = [] }
+
+    func readOverlapState(_ entry: WindowEntry) async -> WindowOverlapLiveState? {
+        guard !stopped, accessibilityGranted else { return nil }
+        let inspector = inspector
+        let workState = workState
+        return await withCheckedContinuation { continuation in
+            worker.async {
+                guard workState.isActive else { continuation.resume(returning: nil); return }
+                continuation.resume(returning: inspector.overlapState(entry))
+            }
+        }
+    }
+
+    func setOverlapFrame(_ entry: WindowEntry, frame: CGRect, expectedFrame: CGRect) async -> CGRect? {
+        guard !stopped, accessibilityGranted else { return nil }
+        let inspector = inspector
+        let workState = workState
+        return await withCheckedContinuation { continuation in
+            worker.async {
+                guard workState.isActive else { continuation.resume(returning: nil); return }
+                continuation.resume(returning: inspector.setOverlapFrame(entry, frame: frame, expectedFrame: expectedFrame))
+            }
+        }
+    }
 
     private enum ApplicationCommand {
         case hide
@@ -481,7 +526,7 @@ final class WindowService: ObservableObject {
         let targetPID: Int32?
         switch action {
         case .activate, .click: targetPID = entry.pid
-        case .minimize, .close, .toggleFullscreen: targetPID = nil
+        case .minimize, .close, .toggleFullscreen, .hideApplication: targetPID = nil
         }
         let request = beginAction(activationTargetPID: targetPID)
         accessibilityGranted = AXIsProcessTrusted()
@@ -562,7 +607,8 @@ private final class WindowInspector: @unchecked Sendable {
         case minimize
         case close
         case toggleFullscreen
-        case click(secondClickMinimizes: Bool)
+        case click(secondClickMinimizes: Bool, hideApplication: Bool)
+        case hideApplication
     }
 
     struct Outcome {
@@ -599,9 +645,11 @@ private final class WindowInspector: @unchecked Sendable {
         let minimized: Bool
         let subrole: String
         let isDialog: Bool
+        let isFullscreen: Bool?
+        let nativeWindowID: CGWindowID?
 
         func settingMinimized(_ minimized: Bool) -> WindowSnapshot {
-            WindowSnapshot(title: title, bounds: bounds, minimized: minimized, subrole: subrole, isDialog: isDialog)
+            WindowSnapshot(title: title, bounds: bounds, minimized: minimized, subrole: subrole, isDialog: isDialog, isFullscreen: isFullscreen, nativeWindowID: nativeWindowID)
         }
 
         func preservingStandardPresentation(from previous: WindowSnapshot?) -> WindowSnapshot {
@@ -609,7 +657,7 @@ private final class WindowInspector: @unchecked Sendable {
             // Only the same retained member's verified classification can carry
             // forward; a newly discovered dialog remains a dialog.
             guard minimized, subrole == "AXDialog", previous?.isDialog == false else { return self }
-            return WindowSnapshot(title: title, bounds: bounds, minimized: minimized, subrole: subrole, isDialog: false)
+            return WindowSnapshot(title: title, bounds: bounds, minimized: minimized, subrole: subrole, isDialog: false, isFullscreen: isFullscreen, nativeWindowID: nativeWindowID)
         }
     }
 
@@ -623,8 +671,11 @@ private final class WindowInspector: @unchecked Sendable {
         let pid: Int32
         let title: String?
         let bounds: CGRect
+        let windowID: CGWindowID
+        let onScreen: Bool
     }
 
+    private let spaces = NativeSpaceReader()
     private var retained: [UInt32: RetainedWindow] = [:]
     private var nextToken: UInt32 = 1
     private var inspectionStartIndex = 0
@@ -637,7 +688,7 @@ private final class WindowInspector: @unchecked Sendable {
     /// erase a still-retained exact member; confirmed closure does.
     var knownWindowIDs: [String] { retained.keys.sorted().map { String($0) } }
 
-    func enumerate(apps: [RunningAppEntry], trusted: Bool, frontmostPID: Int32?) -> [WindowEntry] {
+    func enumerate(apps: [RunningAppEntry], trusted: Bool, frontmostPID: Int32?, trackSpaces: Bool) -> [WindowEntry] {
         guard trusted, AXIsProcessTrusted() else {
             retained.removeAll()
             return []
@@ -703,19 +754,58 @@ private final class WindowInspector: @unchecked Sendable {
                 }
                 guard let token = token(for: element, pid: app.pid, snapshot: snapshot, sampledAt: sampledAt) else { continue }
                 let isFocused = focused.map { CFEqual($0, element) } == true && app.pid == frontmostPID
-                let onScreen = !snapshot.minimized && (isFocused || (hints[app.pid] ?? []).contains {
+                let candidates = (hints[app.pid] ?? []).filter {
                     Self.sameFrame($0.bounds, snapshot.bounds) && Self.compatibleTitles($0.title, snapshot.title)
-                })
+                }
+                let uniqueAX = inventory.elements.filter { other in
+                    guard !CFEqual(other, element) else { return false }
+                    // Reuse sampled metadata only; no additional AX work per capture candidate.
+                    return retained.values.contains { $0.pid == app.pid && CFEqual($0.element, other) &&
+                        Self.sameFrame($0.snapshot.bounds, snapshot.bounds) && Self.compatibleTitles($0.snapshot.title, snapshot.title) }
+                }.isEmpty
+                let captureID = snapshot.nativeWindowID ?? (uniqueAX && candidates.count == 1 ? candidates.first?.windowID : nil)
+                let onScreen = !snapshot.minimized && (isFocused || candidates.contains { $0.onScreen })
                 entries.append(WindowEntry(
                     id: token, pid: app.pid, title: snapshot.title ?? app.name,
                     appName: app.name, bundleIdentifier: app.bundleIdentifier,
                     bounds: snapshot.bounds, isMinimized: snapshot.minimized,
-                    isOnScreen: onScreen, isDialog: snapshot.isDialog, isFocused: isFocused
+                    isOnScreen: onScreen, isDialog: snapshot.isDialog, isFocused: isFocused,
+                    isHidden: NSRunningApplication(processIdentifier: app.pid)?.isHidden ?? false,
+                    isFullscreen: snapshot.isFullscreen ?? false, captureWindowID: captureID
                 ))
             }
         }
         if let nextInspectionPID, let index = apps.firstIndex(where: { $0.pid == nextInspectionPID }) {
             inspectionStartIndex = index
+        }
+        entries = entries.map { entry in
+            let ambiguous = entries.contains { $0.id != entry.id && $0.pid == entry.pid &&
+                Self.sameFrame($0.bounds, entry.bounds) && Self.compatibleTitles($0.title, entry.title) }
+            // Native member IDs distinguish standard tabs sharing one frame.
+            guard ambiguous, retained[entry.id]?.snapshot.nativeWindowID == nil else { return entry }
+            return WindowEntry(id: entry.id, pid: entry.pid, title: entry.title, appName: entry.appName,
+                bundleIdentifier: entry.bundleIdentifier, bounds: entry.bounds, isMinimized: entry.isMinimized,
+                isOnScreen: entry.isOnScreen, isDialog: entry.isDialog, isFocused: entry.isFocused,
+                isHidden: entry.isHidden, isFullscreen: entry.isFullscreen, captureWindowID: nil)
+        }
+        if trackSpaces {
+            let topology = spaces.snapshot(windowIDs: entries.compactMap(\.captureWindowID))
+            entries = entries.map { entry in
+                let memberships = entry.captureWindowID.flatMap { topology.membershipsByWindowID[$0] }
+                let current: Bool? = memberships.flatMap { member in
+                    guard !member.isEmpty, let active = topology.activeSpaceIDs, !active.isEmpty else { return nil }
+                    return !active.isDisjoint(with: member)
+                }
+                let allDesktops: Bool = memberships.map { member in
+                    guard let desktops = topology.userSpaceIDs, desktops.count > 1 else { return false }
+                    return desktops.isSubset(of: Set(member))
+                } ?? false
+                return WindowEntry(id: entry.id, pid: entry.pid, title: entry.title, appName: entry.appName,
+                    bundleIdentifier: entry.bundleIdentifier, bounds: entry.bounds, isMinimized: entry.isMinimized,
+                    isOnScreen: entry.isOnScreen, isDialog: entry.isDialog, isFocused: entry.isFocused,
+                    isHidden: entry.isHidden, isFullscreen: entry.isFullscreen, captureWindowID: entry.captureWindowID,
+                    isOnCurrentSpace: current, isOnAllSpaces: allDesktops)
+            }
         }
         return entries.sorted {
             let appComparison = $0.appName.localizedStandardCompare($1.appName)
@@ -731,7 +821,7 @@ private final class WindowInspector: @unchecked Sendable {
         let needsLatestIntent: Bool
         switch requestedAction {
         case .activate, .click: needsLatestIntent = true
-        case .minimize, .close, .toggleFullscreen: needsLatestIntent = false
+        case .minimize, .close, .toggleFullscreen, .hideApplication: needsLatestIntent = false
         }
         func actionIsCurrent() -> Bool {
             workState.isActive && (!needsLatestIntent || workState.isCurrent(request))
@@ -760,11 +850,11 @@ private final class WindowInspector: @unchecked Sendable {
         cache(current, for: entry.id, record: record)
 
         let action: Action
-        if case .click(let secondClickMinimizes) = requestedAction {
+        if case .click(let secondClickMinimizes, let hideApplication) = requestedAction {
             let focus = focusState(of: inventory.application, timeout: actionTimeout)
-            if secondClickMinimizes, !current.minimized, focus.frontmost,
+            if (secondClickMinimizes || hideApplication), !current.minimized, focus.frontmost,
                let focused = focus.element, CFEqual(focused, record.element) {
-                action = .minimize
+                action = hideApplication ? .hideApplication : .minimize
             } else {
                 action = .activate
             }
@@ -852,9 +942,48 @@ private final class WindowInspector: @unchecked Sendable {
             return result == .success
                 ? Outcome(message: "Full-screen change requested.", activateOwner: false)
                 : .failure("macOS could not change full-screen state (Accessibility error \(result.rawValue)).")
+        case .hideApplication:
+            let result = AXUIElementSetAttributeValue(inventory.application, kAXHiddenAttribute as CFString, kCFBooleanTrue)
+            return result == .success ? .success : .failure("macOS could not hide this application.")
         case .click:
             return .failure("The window action could not be resolved.")
         }
+    }
+
+    private func verifiedOverlapElement(_ entry: WindowEntry) -> AXUIElement? {
+        guard AXIsProcessTrusted(), let record = retained[entry.id], record.pid == entry.pid,
+              let inventory = applicationWindows(pid: entry.pid, timeout: 0.25),
+              inventory.elements.contains(where: { CFEqual($0, record.element) }),
+              owner(of: record.element) == entry.pid else { return nil }
+        return record.element
+    }
+
+    func overlapState(_ entry: WindowEntry) -> WindowOverlapLiveState? {
+        guard let element = verifiedOverlapElement(entry), let snapshot = snapshot(of: element, timeout: 0.25),
+              let fullscreen = booleanAttribute(element, "AXFullScreen", timeout: 0.15, requiresBoolean: true) else { return nil }
+        var sizeSettable: DarwinBoolean = false
+        var positionSettable: DarwinBoolean = false
+        let resize = AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &sizeSettable) == .success && sizeSettable.boolValue
+        let move = AXUIElementIsAttributeSettable(element, kAXPositionAttribute as CFString, &positionSettable) == .success && positionSettable.boolValue
+        return WindowOverlapLiveState(bounds: snapshot.bounds, isStandard: !snapshot.isDialog,
+            isMinimized: snapshot.minimized, isFullscreen: fullscreen, isResizable: resize && move)
+    }
+
+    func setOverlapFrame(_ entry: WindowEntry, frame: CGRect, expectedFrame: CGRect) -> CGRect? {
+        guard frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
+              frame.width >= 160, frame.height >= 100,
+              let state = overlapState(entry), state.isStandard, state.isResizable, !state.isMinimized,
+              !state.isFullscreen, Self.sameFrame(state.bounds, expectedFrame),
+              let element = verifiedOverlapElement(entry) else { return nil }
+        var size = frame.size
+        var point = frame.origin
+        guard let sizeValue = AXValueCreate(.cgSize, &size), let positionValue = AXValueCreate(.cgPoint, &point) else { return nil }
+        AXUIElementSetMessagingTimeout(element, 0.25)
+        guard AXIsProcessTrusted(),
+              AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue) == .success else { return nil }
+        // A normal resize/move permits the app to enforce its own minimum dimensions.
+        _ = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue)
+        return snapshot(of: element, timeout: 0.25)?.bounds
     }
 
     func finishActivation(entry: WindowEntry, workState: WindowWorkState, request: UUID) -> ActivationVerification {
@@ -950,11 +1079,11 @@ private final class WindowInspector: @unchecked Sendable {
         AXUIElementSetMessagingTimeout(element, timeout)
         let attributes = [
             kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute,
-            kAXPositionAttribute, kAXSizeAttribute, kAXMinimizedAttribute
+            kAXPositionAttribute, kAXSizeAttribute, kAXMinimizedAttribute, "AXFullScreen"
         ] as CFArray
         var values: CFArray?
         guard AXUIElementCopyMultipleAttributeValues(element, attributes, [], &values) == .success,
-              let values = values as? [AnyObject], values.count == 6 else { return .unavailable }
+              let values = values as? [AnyObject], values.count == 7 else { return .unavailable }
         guard let role = values[0] as? String, let subrole = values[1] as? String else { return .unavailable }
         let dialog = subrole == "AXDialog" || subrole == "AXSystemDialog"
         guard role == kAXWindowRole, subrole == kAXStandardWindowSubrole || dialog else { return .ineligible }
@@ -965,7 +1094,8 @@ private final class WindowInspector: @unchecked Sendable {
               size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return .unavailable }
         return .verified(WindowSnapshot(
             title: Self.nonempty(values[2] as? String), bounds: CGRect(origin: position, size: size),
-            minimized: minimized, subrole: subrole, isDialog: dialog
+            minimized: minimized, subrole: subrole, isDialog: dialog,
+            isFullscreen: (values[6] as? NSNumber)?.boolValue, nativeWindowID: spaces.windowID(for: element)
         ))
     }
 
@@ -1002,18 +1132,20 @@ private final class WindowInspector: @unchecked Sendable {
     }
 
     private func visibilityHints() -> [VisibilityHint] {
-        guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        guard let records = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
                 as? [[String: Any]] else { return [] }
         return records.compactMap { record in
             guard let owner = record[kCGWindowOwnerPID as String] as? NSNumber,
                   let layer = record[kCGWindowLayer as String] as? NSNumber, layer.intValue == 0,
+                  let number = record[kCGWindowNumber as String] as? NSNumber,
                   let dictionary = record[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: dictionary),
                   bounds.origin.x.isFinite, bounds.origin.y.isFinite,
                   bounds.width.isFinite, bounds.height.isFinite,
                   bounds.width > 0, bounds.height > 0 else { return nil }
             return VisibilityHint(pid: owner.int32Value,
-                                  title: Self.nonempty(record[kCGWindowName as String] as? String), bounds: bounds)
+                                  title: Self.nonempty(record[kCGWindowName as String] as? String), bounds: bounds,
+                                  windowID: number.uint32Value, onScreen: (record[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false)
         }
     }
 

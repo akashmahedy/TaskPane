@@ -1,16 +1,22 @@
 import AppKit
 import SwiftUI
+import TaskPaneCore
 
 /// The bar presents this as a transient popover on the clicked display.
 struct StartMenuView: View {
     @ObservedObject var launcher: LauncherService
     @ObservedObject var settings: SettingsStore
     let height: CGFloat
+    var width: CGFloat = 501
     let dismiss: () -> Void
     @ViewState private var query = ""
     @ViewState private var presentationID = UUID()
     @ViewState private var launchRequest: UUID?
     @FocusState private var searchFocused: Bool
+
+    private var options: TaskbarAdvancedOptions { settings.preferences.options }
+
+    private var pinIconSize: Double { max(8, min(options.startMenuIconSize * 1.4, (width - 1) * 0.48 - 48)) }
 
     private var results: [LauncherEntry] {
         launcher.applications.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
@@ -52,7 +58,7 @@ struct StartMenuView: View {
                             }
                         }
                     }.padding(8)
-                }.frame(width: 260)
+                }.frame(width: (width - 1) * 0.52)
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -60,11 +66,11 @@ struct StartMenuView: View {
                         if pinned.isEmpty {
                             Text("Right-click an app to keep it here.").font(.caption).foregroundStyle(.secondary)
                         } else {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 62))], spacing: 12) {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: max(62, pinIconSize + 16)))], spacing: 12) {
                                 ForEach(pinned) { app in
                                     Button { open(app) } label: {
                                         VStack(spacing: 5) {
-                                            Image(nsImage: AppIcons.icon(path: app.url.path)).resizable().frame(width: 32, height: 32)
+                                            Image(nsImage: AppIcons.icon(path: app.url.path)).resizable().frame(width: pinIconSize, height: pinIconSize)
                                             Text(app.name).font(.caption).lineLimit(1)
                                         }.frame(maxWidth: .infinity).contentShape(Rectangle())
                                     }.buttonStyle(.plain).accessibilityLabel("Launch \(app.name)")
@@ -79,7 +85,7 @@ struct StartMenuView: View {
                         }
                         ForEach(launcher.recentApplications.prefix(8)) { app in appRow(app) }
                     }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(width: 240)
+                }.frame(width: (width - 1) * 0.48)
             }
             Divider()
             HStack {
@@ -87,7 +93,8 @@ struct StartMenuView: View {
                 Spacer()
                 Button("Refresh apps") { launcher.refresh() }.buttonStyle(.plain).font(.caption)
             }.padding(12)
-        }.frame(width: 501, height: height)
+        }.frame(width: width, height: height)
+            .font(.system(size: options.startMenuFontSize))
             .tint(Color(taskPaneHex: settings.preferences.accentHex))
             .onAppear { presentationID = UUID(); launchRequest = nil; searchFocused = true }
             .onDisappear { presentationID = UUID(); launchRequest = nil }
@@ -99,8 +106,8 @@ struct StartMenuView: View {
     private func appRow(_ app: LauncherEntry) -> some View {
         Button { open(app) } label: {
             HStack(spacing: 9) {
-                Image(nsImage: AppIcons.icon(path: app.url.path)).resizable().frame(width: 23, height: 23)
-                Text(app.name).font(.system(size: 12)).lineLimit(1)
+                Image(nsImage: AppIcons.icon(path: app.url.path)).resizable().frame(width: options.startMenuIconSize, height: options.startMenuIconSize)
+                Text(app.name).font(.system(size: options.startMenuFontSize)).lineLimit(1)
                 Spacer(minLength: 2)
             }.padding(7).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel("Launch \(app.name)")

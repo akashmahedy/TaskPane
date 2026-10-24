@@ -29,7 +29,7 @@ struct PreferencesTests {
     }
 
     @Test func rejectsNonFiniteAndOutOfRangeNumbers() {
-        let invalidValues: [Double] = [.nan, .infinity, -.infinity, 31, 121]
+        let invalidValues: [Double] = [.nan, .infinity, -.infinity, 23, 257]
         for value in invalidValues {
             var preferences = TaskPanePreferences()
             preferences.barHeight = value
@@ -176,16 +176,16 @@ struct PreferencesTests {
 
     @Test func rejectsInvalidLayoutNumbersAndAcceptsBoundaries() throws {
         let ranges: [(WritableKeyPath<LayoutCustomization, Double>, Double, Double)] = [
-            (\.lengthPercent, 40, 100), (\.edgeOffset, 0, 200), (\.alongEdgeOffset, -500, 500),
-            (\.itemWidth, 48, 420), (\.minItemWidth, 48, 420), (\.maxItemWidth, 48, 420),
-            (\.itemHeight, 24, 100), (\.itemSpacing, 0, 30), (\.itemOpacity, 0, 1),
-            (\.itemCornerRadius, 0, 50), (\.barCornerRadius, 0, 60)
+            (\.lengthPercent, 10, 100), (\.edgeOffset, 0, 1000), (\.alongEdgeOffset, -4000, 4000),
+            (\.itemWidth, 24, 1200), (\.minItemWidth, 24, 1200), (\.maxItemWidth, 24, 1200),
+            (\.itemHeight, 20, 240), (\.itemSpacing, 0, 100), (\.itemOpacity, 0, 1),
+            (\.itemCornerRadius, 0, 128), (\.barCornerRadius, 0, 128)
         ]
         for (keyPath, lower, upper) in ranges {
             for value in [lower, upper] {
                 var layout = LayoutCustomization()
-                layout.minItemWidth = 48
-                layout.maxItemWidth = 420
+                layout.minItemWidth = 24
+                layout.maxItemWidth = 1200
                 layout[keyPath: keyPath] = value
                 try layout.validate()
             }
@@ -205,11 +205,143 @@ struct PreferencesTests {
         let invalidImportedLayout = try modified(valid) { envelope in
             var preferences = envelope["preferences"] as! [String: Any]
             var layout = preferences["customization"] as! [String: Any]
-            layout["alongEdgeOffset"] = -501
+            layout["alongEdgeOffset"] = -4001
             preferences["customization"] = layout
             envelope["preferences"] = preferences
         }
         #expect(throws: (any Error).self) { try PreferencesBackup.decode(invalidImportedLayout) }
+    }
+
+    @Test func unifiedScaleKeepsSmallestAndLargestSetupsValid() throws {
+        var original = BuiltInPreset.windows.preferences
+        original.pinnedApplicationPaths = ["/Applications/Safari.app"]
+        original.excludedBundleIdentifiers = ["com.example.Hidden"]
+        original.options.middleClickClosesWindow = true
+        original.options.startMenuWidth = 700
+        let small = original.usingOverallScale(50)
+        let large = original.usingOverallScale(250)
+        try small.validate(); try large.validate()
+        #expect(small.fontSize == 8) // Text stays readable at the supported minimum.
+        #expect(large.layout.itemHeight > small.layout.itemHeight)
+        #expect(large.iconSize > small.iconSize)
+        #expect(large.options.verticalPadding > small.options.verticalPadding)
+        for scaled in [small, large] {
+            #expect(scaled.pinnedApplicationPaths == original.pinnedApplicationPaths)
+            #expect(scaled.excludedBundleIdentifiers == original.excludedBundleIdentifiers)
+            #expect(scaled.options.middleClickClosesWindow)
+            #expect(scaled.options.startMenuWidth == 700)
+            #expect(try PreferencesBackup.decode(PreferencesBackup.encode(scaled)) == scaled)
+        }
+        #expect(original.usingOverallScale(.nan) == original)
+        #expect(original.usingOverallScale(0) == small)
+        #expect(original.usingOverallScale(500) == large)
+    }
+
+    @Test func expandedAppearanceBoundariesRoundTrip() throws {
+        let ranges: [(WritableKeyPath<TaskPanePreferences, Double>, Double, Double)] = [
+            (\.barHeight, 24, 256), (\.barOpacity, 0, 1),
+            (\.iconSize, 8, 128), (\.fontSize, 8, 48)
+        ]
+        for (key, lower, upper) in ranges {
+            for value in [lower, upper] {
+                var preferences = TaskPanePreferences()
+                preferences[keyPath: key] = value
+                #expect(try PreferencesBackup.decode(PreferencesBackup.encode(preferences)) == preferences)
+            }
+            for value in [lower - 0.01, upper + 0.01, .nan, .infinity, -.infinity] {
+                var preferences = TaskPanePreferences()
+                preferences[keyPath: key] = value
+                #expect(throws: (any Error).self) { try preferences.validate() }
+            }
+        }
+    }
+
+    @Test func oldBackupsRetainPreferencesAndDefaultNewOptions() throws {
+        var original = BuiltInPreset.windows.preferences
+        original.layout.itemWidth = 203
+        original.pinnedApplicationPaths = ["/Applications/Safari.app"]
+        let oldBackup = try modified(PreferencesBackup.encode(original)) { envelope in
+            var prefs = envelope["preferences"] as! [String: Any]
+            prefs.removeValue(forKey: "advanced")
+            envelope["preferences"] = prefs
+        }
+        let restored = try PreferencesBackup.decode(oldBackup)
+        #expect(restored == original)
+        #expect(restored.advanced == nil)
+        #expect(restored.options == TaskbarAdvancedOptions())
+
+        let partial = try modified(oldBackup) { envelope in
+            var prefs = envelope["preferences"] as! [String: Any]
+            prefs["advanced"] = ["previewWidth": 480, "middleClickClosesWindow": true]
+            envelope["preferences"] = prefs
+        }
+        let migrated = try PreferencesBackup.decode(partial)
+        #expect(migrated.options.previewWidth == 480)
+        #expect(migrated.options.middleClickClosesWindow)
+        #expect(migrated.options.horizontalPadding == 10)
+        #expect(migrated.layout == original.layout)
+        #expect(migrated.pinnedApplicationPaths == original.pinnedApplicationPaths)
+    }
+
+    @Test func advancedOptionsRoundTripEveryCustomValue() throws {
+        var preferences = BuiltInPreset.compact.preferences
+        var options = TaskbarAdvancedOptions()
+        options.horizontalPadding = 17; options.verticalPadding = 9
+        options.sectionSpacing = 21; options.labelSpacing = 11; options.itemHorizontalPadding = 15
+        options.iconOnlyUsesItemHeight = false; options.iconOnlyWidth = 68
+        options.barBorderWidth = 2.5; options.barBorderOpacity = 0.31; options.barShadow = false
+        options.minimizedOpacity = 0.45; options.hiddenOpacity = 0.3; options.dimHiddenWindows = false
+        options.showMinimizedIndicator = false; options.showAppBadges = true
+        options.allowWindowDragging = false; options.allowPinDragging = false
+        options.focusedClickHidesApplication = true; options.middleClickClosesWindow = true
+        options.hoverPreviewsEnabled = true; options.previewDelay = 0.85
+        options.previewWidth = 500; options.previewHeight = 320; options.previewTitleFontSize = 15
+        options.startMenuWidth = 800; options.startMenuHeight = 700
+        options.startMenuFontSize = 17; options.startMenuIconSize = 30
+        options.autoHideDelay = 1.2; options.revealDelay = 0.4
+        options.revealStrip = 7; options.animationDuration = 0.3
+        options.resizeOverlappingWindows = true; options.hideInFullscreen = true; options.useScreenFrame = true
+        options.nativeSpaceTracking = false; options.showAllSpacesIndicator = false
+        options.hiddenDisplayIDs = [53, 98]
+        preferences.options = options
+        let restored = try PreferencesBackup.decode(PreferencesBackup.encode(preferences))
+        #expect(restored == preferences)
+        #expect(restored.options == options)
+        #expect(restored.options.hiddenDisplayIDs == [53, 98])
+    }
+
+    @Test func advancedRangesRejectNonfiniteAndOutOfBounds() throws {
+        let ranges: [(WritableKeyPath<TaskbarAdvancedOptions, Double>, ClosedRange<Double>)] = [
+            (\.horizontalPadding, CustomizationLimits.padding), (\.verticalPadding, CustomizationLimits.padding),
+            (\.sectionSpacing, CustomizationLimits.spacing), (\.labelSpacing, CustomizationLimits.spacing),
+            (\.itemHorizontalPadding, CustomizationLimits.padding), (\.iconOnlyWidth, CustomizationLimits.itemWidth),
+            (\.barBorderWidth, CustomizationLimits.borderWidth), (\.barBorderOpacity, CustomizationLimits.opacity),
+            (\.minimizedOpacity, CustomizationLimits.opacity), (\.hiddenOpacity, CustomizationLimits.opacity),
+            (\.previewDelay, CustomizationLimits.delay), (\.previewWidth, CustomizationLimits.previewWidth),
+            (\.previewHeight, CustomizationLimits.previewHeight), (\.previewTitleFontSize, CustomizationLimits.fontSize),
+            (\.startMenuWidth, CustomizationLimits.startMenuWidth), (\.startMenuHeight, CustomizationLimits.startMenuHeight),
+            (\.startMenuFontSize, CustomizationLimits.fontSize), (\.startMenuIconSize, CustomizationLimits.iconSize),
+            (\.autoHideDelay, CustomizationLimits.delay), (\.revealDelay, CustomizationLimits.delay),
+            (\.revealStrip, CustomizationLimits.revealStrip), (\.animationDuration, CustomizationLimits.animationDuration)
+        ]
+        for (key, range) in ranges {
+            for value in [range.lowerBound, range.upperBound] {
+                var preferences = TaskPanePreferences()
+                preferences.options[keyPath: key] = value
+                #expect(try PreferencesBackup.decode(PreferencesBackup.encode(preferences)) == preferences)
+            }
+            for value in [range.lowerBound - 0.01, range.upperBound + 0.01, .nan, .infinity, -.infinity] {
+                var preferences = TaskPanePreferences()
+                preferences.options[keyPath: key] = value
+                #expect(throws: (any Error).self) { try preferences.validate() }
+                #expect(throws: (any Error).self) { try PreferencesBackup.encode(preferences) }
+            }
+        }
+        var duplicateIDs = TaskPanePreferences()
+        duplicateIDs.options.hiddenDisplayIDs = [7, 7]
+        #expect(throws: (any Error).self) { try duplicateIDs.validate() }
+        duplicateIDs.options.hiddenDisplayIDs = Array(0..<33)
+        #expect(throws: (any Error).self) { try duplicateIDs.validate() }
     }
 
     @Test func rejectsMissingDuplicateSectionsAndInvalidApplicationOrder() throws {
@@ -384,6 +516,8 @@ struct PreferencesTests {
         original.pinnedApplicationPaths = ["/Applications/Safari.app"]
         original.excludedBundleIdentifiers = ["com.example.Hidden"]
         original.widgets.reverse()
+        original.options.startMenuWidth = 800
+        original.options.middleClickClosesWindow = true
 
         var expected = original
         expected.grouping = .adjacent

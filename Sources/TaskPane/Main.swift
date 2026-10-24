@@ -26,6 +26,7 @@ final class TaskPaneAppDelegate: NSObject, NSApplicationDelegate {
     private var bars: TaskbarCoordinator?
     private var statusItem: NSStatusItem?
     private var subscriptions = Set<AnyCancellable>()
+    private var terminationPrepared = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
@@ -59,8 +60,20 @@ final class TaskPaneAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationPrepared else { return .terminateNow }
+        terminationPrepared = true
+        Task { @MainActor in
+            await bars?.prepareToClose()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         settings.saveNow()
+        ApplicationBadgeService.shared.stop()
+        WindowPreviewService.shared.clear()
         metrics.stop()
         windows.stop()
         bars?.close()

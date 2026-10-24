@@ -3,9 +3,9 @@ import SwiftUI
 import TaskPaneCore
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
-    case overview, taskbar, layout, arrangement, appearance, widgets, presets, backup, about
+    case overview, taskbar, layout, arrangement, appearance, advanced, widgets, presets, backup, about
     var id: String { rawValue }
-    var title: String { self == .layout ? "Layout & items" : self == .arrangement ? "Arrange" : rawValue.capitalized }
+    var title: String { self == .layout ? "Layout & items" : self == .arrangement ? "Arrange" : self == .advanced ? "More controls" : rawValue.capitalized }
     var symbol: String {
         switch self {
         case .overview: return "square.grid.2x2"
@@ -13,6 +13,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .layout: return "slider.horizontal.3"
         case .arrangement: return "arrow.up.arrow.down"
         case .appearance: return "paintpalette"
+        case .advanced: return "gearshape.2"
         case .widgets: return "waveform.path.ecg"
         case .presets: return "square.stack.3d.up"
         case .backup: return "externaldrive.badge.timemachine"
@@ -26,6 +27,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .layout: return "Fine-tune item sizes, spacing, transparency and bar position."
         case .arrangement: return "Choose automatic sorting or put every section in your own order."
         case .appearance: return "Make every edge feel like your own."
+        case .advanced: return "Fine-tune interactions, previews, padding, Start and display behavior."
         case .widgets: return "Your system, at a glance. Put each widget where it belongs."
         case .presets: return "Start with a thoughtful setup, then make it yours."
         case .backup: return "Keep your setup safe and take it to another Mac."
@@ -89,7 +91,8 @@ struct SettingsView: View {
                     Text("Your workspace, your way").font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, 16).padding(.top, 24)
-            VStack(spacing: 5) {
+            ScrollView {
+                VStack(spacing: 5) {
                 ForEach(SettingsPage.allCases) { item in
                     Button { page = item } label: {
                         HStack(spacing: 12) {
@@ -103,8 +106,9 @@ struct SettingsView: View {
                         .contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityAddTraits(page == item ? .isSelected : [])
                 }
-            }.padding(.horizontal, 12)
-            Spacer()
+                }.padding(.horizontal, 12)
+            }
+            Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 7) {
                 Label("Local by design", systemImage: "lock.shield").font(.system(size: 11, weight: .medium))
                 Text("Free. Open source. Yours.").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -120,6 +124,7 @@ struct SettingsView: View {
         case .layout: LayoutSettingsView(settings: settings)
         case .arrangement: ArrangementSettingsView(settings: settings, windows: windows)
         case .appearance: appearance
+        case .advanced: AdvancedSettingsView(settings: settings)
         case .widgets: widgets
         case .presets: presets
         case .backup: backup
@@ -197,7 +202,7 @@ struct SettingsView: View {
             Surface(title: "Private alpha", subtitle: "A working foundation, with clear boundaries.") {
                 Text("Available now: window and app switching, pins, launcher, display placement, live CPU / memory / network / battery, presets, and portable preference backups.")
                     .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Text("Coming next: window thumbnails, advanced Spaces handling, GPU / temperature sensors, snapping and saved layouts.")
+                Text("More controls adds optional window thumbnails, drag locks, auto-hide timing, window state styling and menu sizing. Advanced Spaces handling, GPU / temperature sensors, snapping and saved layouts remain planned.")
                     .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -277,6 +282,7 @@ struct SettingsView: View {
 
     private var appearance: some View {
         VStack(spacing: 20) {
+            CurrentLayoutPreview(preferences: settings.preferences)
             Surface(title: "A look that fits your workspace") {
                 SettingRow(title: "Theme") { enumPicker($settings.preferences.theme, title: "Theme") }
                 Divider()
@@ -298,14 +304,10 @@ struct SettingsView: View {
                     Text("#" + settings.preferences.accentHex).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                 }
                 Divider()
-                sliderRow("Minimum bar thickness", value: $settings.preferences.barHeight, range: 32...120, suffix: "pt")
-                sliderRow("Icon size", value: $settings.preferences.iconSize, range: 12...64, suffix: "pt")
-                sliderRow("Text size", value: $settings.preferences.fontSize, range: 9...24, suffix: "pt")
-                SettingRow(title: "Background opacity") {
-                    Slider(value: quantized($settings.preferences.barOpacity, range: 0.2...1, step: 0.05), in: 0.2...1)
-                        .frame(width: 180).accessibilityLabel("Background opacity")
-                    Text("\(Int(settings.preferences.barOpacity * 100))%").monospacedDigit().frame(width: 40, alignment: .trailing)
-                }
+                sliderRow("Minimum bar thickness", value: $settings.preferences.barHeight, range: CustomizationLimits.barHeight, suffix: "pt")
+                sliderRow("Icon size", value: $settings.preferences.iconSize, range: CustomizationLimits.iconSize, suffix: "pt")
+                sliderRow("Text size", value: $settings.preferences.fontSize, range: CustomizationLimits.fontSize, suffix: "pt")
+                CustomizationNumberRow(title: "Background opacity", value: Binding(get: { settings.preferences.barOpacity * 100 }, set: { settings.preferences.barOpacity = $0 / 100 }), range: 0...100, unit: "%")
                 Divider()
                 Toggle("Reduce motion", isOn: $settings.preferences.reduceMotion).toggleStyle(.switch)
             }
@@ -425,18 +427,7 @@ struct SettingsView: View {
     }
 
     private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
-        SettingRow(title: title) {
-            Slider(value: quantized(value, range: range, step: 1), in: range).frame(width: 180).accessibilityLabel(title)
-            Text("\(Int(value.wrappedValue)) \(suffix)").monospacedDigit().frame(width: 45, alignment: .trailing)
-        }
-    }
-
-    private func quantized(_ value: Binding<Double>, range: ClosedRange<Double>, step: Double) -> Binding<Double> {
-        Binding(get: { value.wrappedValue }, set: { proposed in
-            guard proposed.isFinite else { return }
-            let rounded = min(range.upperBound, max(range.lowerBound, (proposed / step).rounded() * step))
-            if value.wrappedValue != rounded { value.wrappedValue = rounded }
-        })
+        CustomizationNumberRow(title: title, value: value, range: range, unit: suffix)
     }
 
     private func movePin(_ index: Int, direction: Int) {

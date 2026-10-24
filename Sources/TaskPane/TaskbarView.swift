@@ -23,17 +23,20 @@ struct TaskbarView: View {
     let showSettings: () -> Void
     let interactionChanged: (Bool) -> Void
     @ViewState private var startPresented = false
+    @ViewState private var previewGroups = Set<String>()
     @ViewState private var presentedGroups = Set<String>()
     private var preferences: TaskPanePreferences { settings.preferences }
     private var layout: LayoutCustomization { preferences.layout }
-    private var iconSize: Double { min(preferences.iconSize, layout.itemHeight - 8) }
+    private var options: TaskbarAdvancedOptions { preferences.options }
+    private var iconOnlyWidth: Double { options.iconOnlyUsesItemHeight ? layout.itemHeight : options.iconOnlyWidth }
+    private var iconSize: Double { min(preferences.iconSize, layout.itemHeight - 2) }
 
     private var visibleWindows: [WindowEntry] {
         arrangedWindows.filter { entry in
             (!preferences.currentDisplayOnly || displayBounds.contains(CGPoint(x: entry.bounds.midX, y: entry.bounds.midY))) &&
             (layout.showMinimizedWindows || !entry.isMinimized) &&
             (layout.showDialogs || !entry.isDialog) &&
-            (layout.showOffscreenWindows || entry.isOnScreen || entry.isMinimized)
+            (layout.showOffscreenWindows || ((options.nativeSpaceTracking ? entry.isOnCurrentSpace : nil) ?? (entry.isOnScreen || entry.isMinimized || entry.isHidden)))
         }
     }
     /// Arrange before filtering so a hidden sibling cannot change its app's
@@ -90,7 +93,7 @@ struct TaskbarView: View {
     private func combinesWindows(available: CGFloat) -> Bool {
         if preferences.grouping == .always { return true }
         guard preferences.grouping == .automatic, applicationKeys.count < visibleWindows.count else { return false }
-        let minimum = vertical || !preferences.showWindowTitles ? layout.itemHeight
+        let minimum = vertical ? layout.itemHeight : !preferences.showWindowTitles ? iconOnlyWidth
             : layout.itemSizing == .fixed ? layout.itemWidth : layout.minItemWidth
         let required = Double(visibleWindows.count) * minimum + Double(max(0, visibleWindows.count - 1)) * layout.itemSpacing
         return required > Double(available)
@@ -112,33 +115,34 @@ struct TaskbarView: View {
     var body: some View {
         Group {
             if vertical {
-                VStack(spacing: layout.itemSpacing) {
+                VStack(spacing: options.sectionSpacing) {
                     ForEach(Array(sections.enumerated()), id: \.element) { index, section in
                         if layout.showDividers && index > 0 { Divider() }
                         sectionContent(section)
                     }
-                }.padding(6)
+                }.padding(.horizontal, options.horizontalPadding).padding(.vertical, options.verticalPadding)
             } else {
-                HStack(spacing: layout.itemSpacing + 4) {
+                HStack(spacing: options.sectionSpacing) {
                     ForEach(Array(sections.enumerated()), id: \.element) { index, section in
                         if layout.showDividers && index > 0 { Divider().padding(.vertical, 7) }
                         sectionContent(section)
                     }
-                }.padding(.horizontal, 10).padding(.vertical, 6)
+                }.padding(.horizontal, options.horizontalPadding).padding(.vertical, options.verticalPadding)
             }
         }
-        .font(.system(size: min(preferences.fontSize, layout.itemHeight - 8)))
+        .font(.system(size: min(preferences.fontSize, layout.itemHeight - 2)))
         .background(Color(nsColor: .windowBackgroundColor).opacity(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 1 : preferences.barOpacity))
         .clipShape(RoundedRectangle(cornerRadius: layout.barCornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: layout.barCornerRadius).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: layout.barCornerRadius).stroke(Color.primary.opacity(options.barBorderOpacity), lineWidth: options.barBorderWidth))
         .tint(Color(taskPaneHex: preferences.accentHex))
         .accessibilityElement(children: .contain).accessibilityLabel("TaskPane taskbar")
         .contextMenu { taskbarCommands }
         .backgroundPreferenceValue(StartButtonBoundsKey.self) { anchor in
             startMenuPresenter(anchor: anchor)
         }
-        .onChange(of: startPresented) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty) }
-        .onChange(of: presentedGroups) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty) }
+        .onChange(of: startPresented) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty || !previewGroups.isEmpty) }
+        .onChange(of: presentedGroups) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty || !previewGroups.isEmpty) }
+        .onChange(of: previewGroups) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty || !previewGroups.isEmpty) }
         .onDisappear { interactionChanged(false) }
     }
 
@@ -187,7 +191,8 @@ struct TaskbarView: View {
                 .frame(width: max(1, bounds.width), height: max(1, bounds.height))
                 .popover(isPresented: $startPresented, arrowEdge: startArrowEdge) {
                     StartMenuView(launcher: launcher, settings: settings,
-                                  height: min(560, max(280, displayBounds.height - 120))) { startPresented = false }
+                                  height: min(options.startMenuHeight, max(200, displayBounds.height - 120)),
+                                  width: min(options.startMenuWidth, max(280, displayBounds.width - 40))) { startPresented = false }
                 }
                 .position(x: bounds.midX, y: bounds.midY)
         }
@@ -214,7 +219,7 @@ struct TaskbarView: View {
     private func adaptiveWidth(_ available: CGFloat, combined: Bool) -> CGFloat {
         let usesApplicationLabels = !windows.accessibilityGranted || combined
         let showsLabels = usesApplicationLabels ? preferences.showAppNames : preferences.showWindowTitles
-        guard showsLabels else { return CGFloat(layout.itemHeight) }
+        guard showsLabels else { return CGFloat(iconOnlyWidth) }
         if layout.itemSizing == .fixed { return CGFloat(layout.itemWidth) }
         let renderedCount = !windows.accessibilityGranted ? fallbackApplications.count
             : combined ? applicationKeys.count : visibleWindows.count
@@ -233,12 +238,14 @@ struct TaskbarView: View {
                 Image(nsImage: AppIcons.icon(path: path)).resizable().frame(width: iconSize, height: iconSize)
                     .frame(width: layout.itemHeight, height: layout.itemHeight)
                     .contentShape(Rectangle())
-                    .onDrag { NSItemProvider(object: "taskpane-pin:\(path)" as NSString) }
-            }.buttonStyle(.plain).help(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)
+                    .taskPaneDrag(enabled: options.allowPinDragging, payload: "taskpane-pin:\(path)")
+            }.buttonStyle(.plain)
+                .overlay(alignment: .topTrailing) { AppBadge(bundleIdentifier: Bundle(url: URL(fileURLWithPath: path))?.bundleIdentifier, enabled: options.showAppBadges) }
+                .help(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)
                 .accessibilityLabel("Launch \(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)")
                 .contextMenu { Button("Unpin") { settings.togglePin(path: path) } }
                 .dropDestination(for: String.self) { values, _ in
-                    guard let value = values.first, value.hasPrefix("taskpane-pin:") else { return false }
+                    guard options.allowPinDragging, let value = values.first, value.hasPrefix("taskpane-pin:") else { return false }
                     let source = String(value.dropFirst("taskpane-pin:".count))
                     var pins = preferences.pinnedApplicationPaths
                     guard source != path, pins.contains(source), pins.contains(path) else { return false }
@@ -255,14 +262,16 @@ struct TaskbarView: View {
         if !windows.accessibilityGranted {
             ForEach(fallbackApplications) { app in
                 Button { windows.activateApp(pid: app.pid) } label: {
-                    HStack(spacing: 7) {
+                    HStack(spacing: preferences.options.labelSpacing) {
                         Image(nsImage: AppIcons.icon(path: app.url?.path)).resizable().frame(width: iconSize, height: iconSize)
                         if !vertical && preferences.showAppNames { Text(app.name).lineLimit(1) }
-                    }.frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(layout.itemHeight)), height: layout.itemHeight)
+                    }.frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(preferences.options.iconOnlyUsesItemHeight ? layout.itemHeight : preferences.options.iconOnlyWidth)), height: layout.itemHeight)
                         .background(Color.primary.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
                         .contentShape(Rectangle())
-                        .onDrag { NSItemProvider(object: (app.bundleIdentifier ?? "app:\(app.name)") as NSString) }
-                }.buttonStyle(.plain).help("Activate \(app.name) · Enable Accessibility for individual windows")
+                        .taskPaneDrag(enabled: options.allowWindowDragging, payload: app.bundleIdentifier ?? "app:\(app.name)")
+                }.buttonStyle(.plain)
+                    .overlay(alignment: .topTrailing) { AppBadge(bundleIdentifier: app.bundleIdentifier, enabled: options.showAppBadges) }
+                    .help("Activate \(app.name) · Enable Accessibility for individual windows")
                     .dropDestination(for: String.self) { keys, _ in
                         arrange(keys.first, before: app.bundleIdentifier ?? "app:\(app.name)")
                     }
@@ -282,8 +291,12 @@ struct TaskbarView: View {
             ForEach(visibleWindows) { entry in
                 WindowButton(entry: entry, windows: windows, settings: settings, vertical: vertical, width: width,
                              order: visibleWindows.map { String($0.id) }, showSettings: showSettings, move: moveWindow)
+                    .modifier(WindowHoverPreview(entry: entry, windows: windows, settings: settings, displayBounds: displayBounds, arrowEdge: startArrowEdge,
+                        interactionChanged: { open in
+                            if open { previewGroups.insert(String(entry.id)) } else { previewGroups.remove(String(entry.id)) }
+                        }))
                     .dropDestination(for: String.self) { keys, _ in
-                        guard let key = keys.first, key.hasPrefix("taskpane-window:") else { return false }
+                        guard options.allowWindowDragging, let key = keys.first, key.hasPrefix("taskpane-window:") else { return false }
                         return moveWindow(String(key.dropFirst("taskpane-window:".count)), String(entry.id))
                     }
             }
@@ -292,7 +305,7 @@ struct TaskbarView: View {
 
     @discardableResult private func moveWindow(_ id: String, _ target: String?) -> Bool {
         let visible = visibleWindows
-        guard visible.contains(where: { String($0.id) == id }),
+        guard options.allowWindowDragging, visible.contains(where: { String($0.id) == id }),
               target.map({ value in visible.contains(where: { String($0.id) == value }) }) ?? true else { return false }
         let entries = arrangedWindows
         var sources = [id]
@@ -313,7 +326,7 @@ struct TaskbarView: View {
 
     private func arrange(_ key: String?, before target: String) -> Bool {
         let order = applicationKeys
-        guard let key, key != target, order.contains(key), order.contains(target) else { return false }
+        guard options.allowWindowDragging, let key, key != target, order.contains(key), order.contains(target) else { return false }
         // An earlier individual drag must not override this application move.
         windows.resetWindowOrder()
         settings.moveApplication(key, before: target, currentOrder: order, usingDisplayedOrder: true)
@@ -341,15 +354,18 @@ struct WindowButton: View {
     private var preferences: TaskPanePreferences { settings.preferences }
     private var layout: LayoutCustomization { preferences.layout }
     var body: some View {
-        Button { windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes) } label: {
-            HStack(spacing: 7) {
+        Button { windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes, hideApplication: preferences.options.focusedClickHidesApplication) } label: {
+            HStack(spacing: preferences.options.labelSpacing) {
                 Image(nsImage: AppIcons.icon(bundleIdentifier: entry.bundleIdentifier, pid: entry.pid)).resizable()
-                    .frame(width: min(preferences.iconSize, layout.itemHeight - 8), height: min(preferences.iconSize, layout.itemHeight - 8))
+                    .frame(width: min(preferences.iconSize, layout.itemHeight - 2), height: min(preferences.iconSize, layout.itemHeight - 2))
+                if preferences.options.showAllSpacesIndicator && entry.isOnAllSpaces {
+                    Image(systemName: "pin.fill").font(.system(size: 9)).help("Shown on all desktops")
+                }
                 if !vertical && preferences.showWindowTitles {
                     Text(entry.title.isEmpty ? "Untitled" : entry.title).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(.horizontal, vertical ? 2 : 7)
+            .padding(.horizontal, vertical ? min(2, preferences.options.itemHorizontalPadding) : preferences.options.itemHorizontalPadding)
             .frame(width: vertical ? nil : width, height: layout.itemHeight)
             .background(Color.primary.opacity(layout.itemOpacity + (hovered ? 0.07 : entry.isFocused ? 0.05 : 0)), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
             .overlay(alignment: .bottom) {
@@ -357,10 +373,17 @@ struct WindowButton: View {
                     Capsule().fill(Color(taskPaneHex: preferences.accentHex)).frame(width: 20, height: 3)
                 }
             }
-            .opacity(entry.isMinimized ? 0.6 : 1)
+            .overlay(alignment: .topTrailing) {
+                if layout.showMinimizedWindows && preferences.options.showMinimizedIndicator && entry.isMinimized {
+                    Image(systemName: "minus").font(.system(size: 9, weight: .bold)).padding(3)
+                }
+            }
+            .opacity(entry.isMinimized ? preferences.options.minimizedOpacity : entry.isHidden && preferences.options.dimHiddenWindows ? preferences.options.hiddenOpacity : 1)
             .contentShape(Rectangle())
-            .onDrag { NSItemProvider(object: "taskpane-window:\(entry.id)" as NSString) }
+            .taskPaneDrag(enabled: preferences.options.allowWindowDragging, payload: "taskpane-window:\(entry.id)")
         }
+        .overlay(alignment: .topTrailing) { AppBadge(bundleIdentifier: entry.bundleIdentifier, enabled: preferences.options.showAppBadges) }
+        .taskPaneMiddleClick(enabled: preferences.options.middleClickClosesWindow) { windows.close(entry) }
         .buttonStyle(.plain).help("\(entry.appName) · \(entry.title)")
         .accessibilityLabel("\(entry.appName): \(entry.title)")
         .accessibilityValue(entry.isMinimized ? "Minimized" : entry.isFocused ? "Focused" : "Open")
@@ -370,9 +393,9 @@ struct WindowButton: View {
             Divider()
             let index = order.firstIndex(of: String(entry.id)) ?? 0
             Button("Move earlier") { if index > 0 { _ = move(String(entry.id), order[index - 1]) } }
-                .disabled(index == 0)
+                .disabled(index == 0 || !preferences.options.allowWindowDragging)
             Button("Move later") { if index + 1 < order.count { _ = move(order[index + 1], String(entry.id)) } }
-                .disabled(index + 1 >= order.count)
+                .disabled(index + 1 >= order.count || !preferences.options.allowWindowDragging)
             Divider()
             Menu("TaskPane") {
                 Button("Settings…", action: showSettings)
@@ -427,27 +450,29 @@ struct GroupedWindowButton: View {
     private var layout: LayoutCustomization { preferences.layout }
     var body: some View {
         Button {
-            if entries.count == 1, let entry = entries.first { windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes) }
+            if entries.count == 1, let entry = entries.first { windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes, hideApplication: preferences.options.focusedClickHidesApplication) }
             else { presented.toggle() }
         } label: {
             if let first = entries.first {
                 HStack(spacing: 6) {
                     Image(nsImage: AppIcons.icon(bundleIdentifier: first.bundleIdentifier, pid: first.pid)).resizable()
-                        .frame(width: min(preferences.iconSize, layout.itemHeight - 8), height: min(preferences.iconSize, layout.itemHeight - 8))
+                        .frame(width: min(preferences.iconSize, layout.itemHeight - 2), height: min(preferences.iconSize, layout.itemHeight - 2))
                     if !vertical && preferences.showAppNames { Text(first.appName).lineLimit(1) }
                     if !vertical { Text("\(entries.count)").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary) }
-                }.padding(.horizontal, 5).frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(layout.itemHeight)), height: layout.itemHeight)
+                }.padding(.horizontal, preferences.options.itemHorizontalPadding).frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(preferences.options.iconOnlyUsesItemHeight ? layout.itemHeight : preferences.options.iconOnlyWidth)), height: layout.itemHeight)
                     .background(Color.primary.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
                     .contentShape(Rectangle())
-                    .onDrag { NSItemProvider(object: first.arrangementKey as NSString) }
+                    .taskPaneDrag(enabled: preferences.options.allowWindowDragging, payload: first.arrangementKey)
             }
-        }.buttonStyle(.plain).help("\(entries.first?.appName ?? "App"): \(entries.count) windows")
+        }.buttonStyle(.plain)
+            .overlay(alignment: .topTrailing) { AppBadge(bundleIdentifier: entries.first?.bundleIdentifier, enabled: preferences.options.showAppBadges) }
+            .help("\(entries.first?.appName ?? "App"): \(entries.count) windows")
             .popover(isPresented: $presented) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(entries.first?.appName ?? "Windows").font(.headline)
                     ForEach(entries) { entry in
                         Button(entry.title.isEmpty ? "Untitled window" : entry.title) {
-                            windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes); presented = false
+                            windows.click(entry, secondClickMinimizes: preferences.secondClickMinimizes, hideApplication: preferences.options.focusedClickHidesApplication); presented = false
                         }.buttonStyle(.plain).lineLimit(1).padding(.vertical, 5)
                             .contextMenu { WindowContextCommands(entry: entry, windows: windows, settings: settings) }
                     }

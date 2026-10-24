@@ -10,7 +10,7 @@ let package = Package(
         .executableTarget(name: "TaskPane", dependencies: ["TaskPaneCore"], linkerSettings: [
             .linkedFramework("AppKit"), .linkedFramework("SwiftUI"),
             .linkedFramework("ApplicationServices"), .linkedFramework("IOKit"),
-            .linkedFramework("SystemConfiguration")
+            .linkedFramework("SystemConfiguration"), .linkedFramework("ScreenCaptureKit")
         ]),
         .testTarget(name: "TaskPaneCoreTests", dependencies: ["TaskPaneCore"])
     ],

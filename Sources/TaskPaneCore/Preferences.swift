@@ -127,17 +127,17 @@ public struct LayoutCustomization: Codable, Equatable {
     }
 
     public func validate() throws {
-        try Self.check(lengthPercent, in: 40...100, field: "bar length")
-        try Self.check(edgeOffset, in: 0...200, field: "edge offset")
-        try Self.check(alongEdgeOffset, in: -500...500, field: "position offset")
-        try Self.check(itemWidth, in: 48...420, field: "item width")
-        try Self.check(minItemWidth, in: 48...420, field: "minimum item width")
-        try Self.check(maxItemWidth, in: 48...420, field: "maximum item width")
-        try Self.check(itemHeight, in: 24...100, field: "item height")
-        try Self.check(itemSpacing, in: 0...30, field: "item spacing")
-        try Self.check(itemOpacity, in: 0...1, field: "item opacity")
-        try Self.check(itemCornerRadius, in: 0...50, field: "item corner radius")
-        try Self.check(barCornerRadius, in: 0...60, field: "bar corner radius")
+        try Self.check(lengthPercent, in: CustomizationLimits.lengthPercent, field: "bar length")
+        try Self.check(edgeOffset, in: CustomizationLimits.edgeOffset, field: "edge offset")
+        try Self.check(alongEdgeOffset, in: CustomizationLimits.alongEdgeOffset, field: "position offset")
+        try Self.check(itemWidth, in: CustomizationLimits.itemWidth, field: "item width")
+        try Self.check(minItemWidth, in: CustomizationLimits.itemWidth, field: "minimum item width")
+        try Self.check(maxItemWidth, in: CustomizationLimits.itemWidth, field: "maximum item width")
+        try Self.check(itemHeight, in: CustomizationLimits.itemHeight, field: "item height")
+        try Self.check(itemSpacing, in: CustomizationLimits.spacing, field: "item spacing")
+        try Self.check(itemOpacity, in: CustomizationLimits.opacity, field: "item opacity")
+        try Self.check(itemCornerRadius, in: CustomizationLimits.cornerRadius, field: "item corner radius")
+        try Self.check(barCornerRadius, in: CustomizationLimits.cornerRadius, field: "bar corner radius")
         guard minItemWidth <= maxItemWidth else {
             throw PreferencesError.invalidValue(field: "item width limits", reason: "minimum must not exceed maximum")
         }
@@ -266,6 +266,11 @@ public struct TaskPanePreferences: Codable, Equatable {
     public var excludedBundleIdentifiers: [String] = []
     /// Optional storage keeps schema-1 backups from the original alpha decodable.
     public var customization: LayoutCustomization? = nil
+    public var advanced: TaskbarAdvancedOptions? = nil
+    public var options: TaskbarAdvancedOptions {
+        get { advanced ?? TaskbarAdvancedOptions() }
+        set { advanced = newValue }
+    }
     public var layout: LayoutCustomization {
         get { customization ?? LayoutCustomization() }
         set { customization = newValue }
@@ -294,15 +299,36 @@ public struct TaskPanePreferences: Codable, Equatable {
         return updated
     }
 
+    /// Scales the taskbar's principal dimensions in one preference transaction.
+    /// Every size remains within its independently supported range.
+    public func usingOverallScale(_ percent: Double) -> TaskPanePreferences {
+        guard percent.isFinite else { return self }
+        func fit(_ value: Double, _ range: ClosedRange<Double>) -> Double { min(range.upperBound, max(range.lowerBound, value)) }
+        let scale = fit(percent, CustomizationLimits.overallScale) / 100
+        var updated = self
+        updated.barHeight = fit(50 * scale, CustomizationLimits.barHeight)
+        updated.iconSize = fit(22 * scale, CustomizationLimits.iconSize)
+        updated.fontSize = fit(12 * scale, CustomizationLimits.fontSize)
+        updated.layout.itemHeight = fit(40 * scale, CustomizationLimits.itemHeight)
+        updated.layout.itemWidth = fit(184 * scale, CustomizationLimits.itemWidth)
+        updated.layout.minItemWidth = fit(120 * scale, CustomizationLimits.itemWidth)
+        updated.layout.maxItemWidth = fit(240 * scale, CustomizationLimits.itemWidth)
+        updated.layout.itemSpacing = fit(3 * scale, CustomizationLimits.spacing)
+        updated.options.horizontalPadding = fit(10 * scale, CustomizationLimits.padding)
+        updated.options.verticalPadding = fit(5 * scale, CustomizationLimits.padding)
+        return updated
+    }
+
     /// Checks a complete snapshot without changing it or touching any referenced files.
     public func validate() throws {
         guard schemaVersion == 1 else { throw PreferencesError.unsupportedSchemaVersion(schemaVersion) }
-        try Self.check(barHeight, in: 32...120, field: "bar height")
-        try Self.check(barOpacity, in: 0.2...1, field: "bar opacity")
-        try Self.check(iconSize, in: 12...64, field: "icon size")
-        try Self.check(fontSize, in: 9...24, field: "font size")
+        try Self.check(barHeight, in: CustomizationLimits.barHeight, field: "bar height")
+        try Self.check(barOpacity, in: CustomizationLimits.opacity, field: "bar opacity")
+        try Self.check(iconSize, in: CustomizationLimits.iconSize, field: "icon size")
+        try Self.check(fontSize, in: CustomizationLimits.fontSize, field: "font size")
         try Self.check(refreshInterval, in: 1...60, field: "refresh interval")
         try layout.validate()
+        try options.validate()
 
         guard accentHex.count == 6,
               accentHex.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }) else {

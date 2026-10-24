@@ -7,16 +7,26 @@ struct LayoutSettingsView: View {
     private var layout: LayoutCustomization { settings.preferences.layout }
     var body: some View {
         VStack(spacing: 20) {
+            CurrentLayoutPreview(preferences: settings.preferences)
+            Surface(title: "Overall scale", subtitle: "Resize the bar, buttons, icons and text together, then adjust each part below.") {
+                CustomizationNumberRow(title: "Overall scale", value: Binding(get: {
+                    min(250, max(50, settings.preferences.barHeight / 50 * 100))
+                }, set: { percent in
+                    settings.preferences = settings.preferences.usingOverallScale(percent)
+                }), range: CustomizationLimits.overallScale, unit: "%")
+                Text("100% uses a 50 pt bar, 40 pt items, 22 pt icons and 12 pt text. Values stay within each control’s range. Changing this scale replaces those size and padding values.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             Surface(title: "Bar position & shape", subtitle: "Position is clamped to the display so the bar stays reachable.") {
                 SettingRow(title: "Alignment") {
                     Picker("Alignment", selection: $settings.preferences.layout.alignment) {
                         ForEach(BarAlignment.allCases) { Text($0.displayName).tag($0) }
                     }.labelsHidden().frame(width: 180)
                 }
-                numeric("Bar length", value: $settings.preferences.layout.lengthPercent, range: 40...100, unit: "%")
-                numeric("Distance from edge", value: $settings.preferences.layout.edgeOffset, range: 0...200)
-                numeric("Position along edge", value: $settings.preferences.layout.alongEdgeOffset, range: -500...500)
-                numeric("Bar corner radius", value: $settings.preferences.layout.barCornerRadius, range: 0...60)
+                numeric("Bar length", value: $settings.preferences.layout.lengthPercent, range: CustomizationLimits.lengthPercent, unit: "%")
+                numeric("Distance from edge", value: $settings.preferences.layout.edgeOffset, range: CustomizationLimits.edgeOffset)
+                numeric("Position along edge", value: $settings.preferences.layout.alongEdgeOffset, range: CustomizationLimits.alongEdgeOffset)
+                numeric("Bar corner radius", value: $settings.preferences.layout.barCornerRadius, range: CustomizationLimits.cornerRadius)
                 Text("Choose the screen edge in Taskbar. Leading and trailing align along that edge; the position offset then moves the bar within the screen.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
@@ -27,24 +37,20 @@ struct LayoutSettingsView: View {
                     }.labelsHidden().frame(width: 180)
                 }
                 if layout.itemSizing == .fixed {
-                    numeric("Item width", value: $settings.preferences.layout.itemWidth, range: 48...420)
+                    numeric("Item width", value: $settings.preferences.layout.itemWidth, range: CustomizationLimits.itemWidth)
                 } else {
                     numeric("Minimum width", value: Binding(get: { layout.minItemWidth }, set: { value in
                         var custom = layout; custom.minItemWidth = value; custom.maxItemWidth = max(value, custom.maxItemWidth); settings.preferences.layout = custom
-                    }), range: 48...420)
+                    }), range: CustomizationLimits.itemWidth)
                     numeric("Maximum width", value: Binding(get: { layout.maxItemWidth }, set: { value in
                         var custom = layout; custom.maxItemWidth = value; custom.minItemWidth = min(value, custom.minItemWidth); settings.preferences.layout = custom
-                    }), range: 48...420)
+                    }), range: CustomizationLimits.itemWidth)
                 }
-                numeric("Item height", value: $settings.preferences.layout.itemHeight, range: 24...100)
-                numeric("Item spacing", value: $settings.preferences.layout.itemSpacing, range: 0...30)
-                numeric("Item corner radius", value: $settings.preferences.layout.itemCornerRadius, range: 0...50)
-                SettingRow(title: "Item background opacity") {
-                    Slider(value: quantizedSliderBinding($settings.preferences.layout.itemOpacity, range: 0...1, scale: 100), in: 0...1).frame(width: 190)
-                        .accessibilityLabel("Item background opacity")
-                    Text("\(Int(layout.itemOpacity * 100))%").monospacedDigit().frame(width: 48, alignment: .trailing)
-                }
-                Text("Icons shrink to fit item height. The bar grows when needed to fit your items. Background transparency and icon/text sizes are in Appearance.")
+                numeric("Item height", value: $settings.preferences.layout.itemHeight, range: CustomizationLimits.itemHeight)
+                numeric("Item spacing", value: $settings.preferences.layout.itemSpacing, range: CustomizationLimits.spacing)
+                numeric("Item corner radius", value: $settings.preferences.layout.itemCornerRadius, range: CustomizationLimits.cornerRadius)
+                CustomizationNumberRow(title: "Item background opacity", value: Binding(get: { layout.itemOpacity * 100 }, set: { settings.preferences.layout.itemOpacity = $0 / 100 }), range: 0...100, unit: "%")
+                Text("Effective bar thickness: \(Int(max(settings.preferences.barHeight, layout.itemHeight + ((settings.preferences.barEdge == .left || settings.preferences.barEdge == .right) ? settings.preferences.options.horizontalPadding : settings.preferences.options.verticalPadding) * 2))) pt. Effective icon size: \(Int(min(settings.preferences.iconSize, layout.itemHeight - 2))) pt. Background transparency and icon/text sizes are in Appearance; padding and behavior are in More controls.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Surface(title: "Quick density") {
@@ -60,29 +66,7 @@ struct LayoutSettingsView: View {
     }
 
     private func numeric(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String = "pt") -> some View {
-        SettingRow(title: title) {
-            Slider(value: quantizedSliderBinding(value, range: range), in: range).frame(width: 190).accessibilityLabel(title)
-            TextField(title, value: value, format: .number.precision(.fractionLength(0)))
-                .textFieldStyle(.roundedBorder).frame(width: 55).multilineTextAlignment(.trailing)
-                .onChange(of: value.wrappedValue) { _, number in
-                    if !number.isFinite { value.wrappedValue = range.lowerBound }
-                    else if !range.contains(number) { value.wrappedValue = min(range.upperBound, max(range.lowerBound, number)) }
-                }
-            Text(unit).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 18)
-        }
-    }
-
-    /// Quantize values in the binding instead of asking AppKit to create a tick
-    /// for every step across wide ranges (for example, all 1,001 offsets).
-    private func quantizedSliderBinding(_ value: Binding<Double>, range: ClosedRange<Double>, scale: Double = 1) -> Binding<Double> {
-        Binding(get: {
-            let current = value.wrappedValue
-            return current.isFinite ? min(range.upperBound, max(range.lowerBound, current)) : range.lowerBound
-        }, set: { proposed in
-            let clamped = proposed.isFinite ? min(range.upperBound, max(range.lowerBound, proposed)) : range.lowerBound
-            let quantized = min(range.upperBound, max(range.lowerBound, (clamped * scale).rounded() / scale))
-            if value.wrappedValue != quantized { value.wrappedValue = quantized }
-        })
+        CustomizationNumberRow(title: title, value: value, range: range, unit: unit)
     }
 
     private func densityButton(_ title: String, height: Double, spacing: Double) -> some View {
