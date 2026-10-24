@@ -89,7 +89,11 @@ final class NativeTabService {
 
     func select(_ entry: WindowEntry) -> Bool {
         guard let tab = retained[entry.id], tab.pid == entry.pid, isTab(tab.button, pid: entry.pid) else { return false }
-        return AXUIElementPerformAction(tab.button, kAXPressAction as CFString) == .success
+        AXUIElementSetMessagingTimeout(tab.button, 0.5)
+        let result = AXUIElementPerformAction(tab.button, kAXPressAction as CFString)
+        // AppKit may apply a tab selection while its AX reply times out. The
+        // caller always verifies selection and the new host; it never re-presses.
+        return result == .success || result == .cannotComplete
     }
 
     func close(_ entry: WindowEntry) -> AXError {

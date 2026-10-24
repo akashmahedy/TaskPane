@@ -895,12 +895,24 @@ private final class WindowInspector: @unchecked Sendable {
             }
             var activationElement = record.element
             if entry.isNativeTab {
-                guard actionIsCurrent(), tabs.select(entry),
-                      let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
-                      let selected = tabs.window(for: entry, in: fresh.elements), tabs.isSelected(entry) else {
-                    return .failure("The selected tab changed or could not be selected. Refresh and try again.")
+                guard actionIsCurrent(), tabs.select(entry) else {
+                    return .failure("This tab could not accept selection. Refresh and try again.")
                 }
-                activationElement = selected
+                let selectionDeadline = ProcessInfo.processInfo.systemUptime + 1
+                var selectedHost: AXUIElement?
+                repeat {
+                    guard actionIsCurrent(), AXIsProcessTrusted() else { return .failure("Tab activation cancelled.") }
+                    if let fresh = applicationWindows(pid: entry.pid, timeout: 0.15),
+                       let selected = tabs.window(for: entry, in: fresh.elements), tabs.isSelected(entry) {
+                        selectedHost = selected
+                        break
+                    }
+                    if ProcessInfo.processInfo.systemUptime < selectionDeadline { Thread.sleep(forTimeInterval: 0.05) }
+                } while ProcessInfo.processInfo.systemUptime < selectionDeadline
+                guard let selectedHost, actionIsCurrent() else {
+                    return .failure("The selected tab changed or could not be verified. Refresh and try again.")
+                }
+                activationElement = selectedHost
             }
             var raised = AXUIElementPerformAction(activationElement, kAXRaiseAction as CFString)
             if current.minimized, raised == .cannotComplete {
