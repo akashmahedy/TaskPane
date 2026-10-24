@@ -134,7 +134,7 @@ struct TaskbarView: View {
         .tint(Color(taskPaneHex: preferences.accentHex))
         .accessibilityElement(children: .contain).accessibilityLabel("TaskPane taskbar")
         .contextMenu { taskbarCommands }
-        .overlayPreferenceValue(StartButtonBoundsKey.self) { anchor in
+        .backgroundPreferenceValue(StartButtonBoundsKey.self) { anchor in
             startMenuPresenter(anchor: anchor)
         }
         .onChange(of: startPresented) { _, _ in interactionChanged(startPresented || !presentedGroups.isEmpty) }
@@ -232,10 +232,11 @@ struct TaskbarView: View {
             } label: {
                 Image(nsImage: AppIcons.icon(path: path)).resizable().frame(width: iconSize, height: iconSize)
                     .frame(width: layout.itemHeight, height: layout.itemHeight)
+                    .contentShape(Rectangle())
+                    .onDrag { NSItemProvider(object: "taskpane-pin:\(path)" as NSString) }
             }.buttonStyle(.plain).help(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)
                 .accessibilityLabel("Launch \(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)")
                 .contextMenu { Button("Unpin") { settings.togglePin(path: path) } }
-                .draggable("taskpane-pin:\(path)")
                 .dropDestination(for: String.self) { values, _ in
                     guard let value = values.first, value.hasPrefix("taskpane-pin:") else { return false }
                     let source = String(value.dropFirst("taskpane-pin:".count))
@@ -259,8 +260,9 @@ struct TaskbarView: View {
                         if !vertical && preferences.showAppNames { Text(app.name).lineLimit(1) }
                     }.frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(layout.itemHeight)), height: layout.itemHeight)
                         .background(Color.primary.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
+                        .contentShape(Rectangle())
+                        .onDrag { NSItemProvider(object: (app.bundleIdentifier ?? "app:\(app.name)") as NSString) }
                 }.buttonStyle(.plain).help("Activate \(app.name) · Enable Accessibility for individual windows")
-                    .draggable(app.bundleIdentifier ?? "app:\(app.name)")
                     .dropDestination(for: String.self) { keys, _ in
                         arrange(keys.first, before: app.bundleIdentifier ?? "app:\(app.name)")
                     }
@@ -274,14 +276,12 @@ struct TaskbarView: View {
                                     interactionChanged: { open in
                     if open { presentedGroups.insert(key) } else { presentedGroups.remove(key) }
                 })
-                    .draggable(key)
                     .dropDestination(for: String.self) { keys, _ in arrange(keys.first, before: key) }
             }
         } else {
             ForEach(visibleWindows) { entry in
                 WindowButton(entry: entry, windows: windows, settings: settings, vertical: vertical, width: width,
                              order: visibleWindows.map { String($0.id) }, showSettings: showSettings, move: moveWindow)
-                    .draggable("taskpane-window:\(entry.id)")
                     .dropDestination(for: String.self) { keys, _ in
                         guard let key = keys.first, key.hasPrefix("taskpane-window:") else { return false }
                         return moveWindow(String(key.dropFirst("taskpane-window:".count)), String(entry.id))
@@ -358,6 +358,8 @@ struct WindowButton: View {
                 }
             }
             .opacity(entry.isMinimized ? 0.6 : 1)
+            .contentShape(Rectangle())
+            .onDrag { NSItemProvider(object: "taskpane-window:\(entry.id)" as NSString) }
         }
         .buttonStyle(.plain).help("\(entry.appName) · \(entry.title)")
         .accessibilityLabel("\(entry.appName): \(entry.title)")
@@ -436,6 +438,8 @@ struct GroupedWindowButton: View {
                     if !vertical { Text("\(entries.count)").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary) }
                 }.padding(.horizontal, 5).frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(layout.itemHeight)), height: layout.itemHeight)
                     .background(Color.primary.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
+                    .contentShape(Rectangle())
+                    .onDrag { NSItemProvider(object: first.arrangementKey as NSString) }
             }
         }.buttonStyle(.plain).help("\(entries.first?.appName ?? "App"): \(entries.count) windows")
             .popover(isPresented: $presented) {
