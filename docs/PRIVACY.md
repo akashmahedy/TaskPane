@@ -15,6 +15,7 @@ TaskPane 0.1.0 contains no account system, telemetry SDK, analytics, updater or 
 - Launcher actions ask macOS to launch the selected local application. The launched application has its own privacy behavior.
 - Window and app menu commands run only on user action. Opt-in overlap avoidance can resize eligible normal windows and retains original geometry for safe restoration; it does not restore over later user edits. Quit requests normal application termination, allowing the application to handle unsaved work.
 - Granting Accessibility is optional and controlled by macOS. Revoking it disables individual-window actions.
-- Dock edge/auto-hide settings change only through explicit Apply/Restore buttons. The original key values are stored locally in Dock-original.json, separately from portable preferences. Restore refuses to overwrite newer Dock changes. TaskPane installs no daemon and writes no fan settings.
+- Dock edge, auto-hide and reveal delay change through explicit Apply/Restore. Optional normal-quit restoration restores keys still owned by TaskPane and preserves later independent edits. Original values and key absence are stored locally in Dock-original.json, separately from portable preferences, for recovery after an unexpected exit. TaskPane installs no daemon and writes no fan settings.
+- Standard native tab titles/group identity stay in memory. Actions revalidate exact AX tab/group membership; closing a tab uses its own native close control or a verified explicit Close Tab menu command, never a window close button or synthetic keyboard shortcut.
 
 The source repository excludes build output, logs, diagnostic evidence and personal preferences. Report bugs without attaching private window titles or unredacted backups.

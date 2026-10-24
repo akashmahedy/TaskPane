@@ -13,7 +13,7 @@ Native acceptance comes before claiming feature completion: compare the actual a
 
 ## Customization update
 
-Source `d66aab4` adds linked sizing, expanded adjustment ranges, more controls, configurable Start, optional hover snapshots, middle-click close, interaction switches, native Space membership, badges, reversible overlap avoidance and explicit Dock edge/auto-hide controls. See [the current reference comparison](TASKBAR-PARITY.md). Historical native evidence retains its original executable scope. Full inactive-tab task discovery, Space assignment, complete Dock hiding, independent display profiles and wider native acceptance remain separate work.
+Source `d66aab4` adds linked sizing, expanded adjustment ranges, more controls, configurable Start, optional hover snapshots, middle-click close, interaction switches, native Space membership, badges, reversible overlap avoidance and explicit Dock edge/auto-hide controls. See [the current reference comparison](TASKBAR-PARITY.md). Historical native evidence retains its original executable scope. The follow-up adds standard AppKit tab tasks, full Dock edge-reveal suppression and quit restoration, plus six community-inspired visual presets. Complete nonstandard/inaccessible off-Space discovery, Space assignment, independent display profiles and wider platform acceptance remain separate work.
 
 ## Next reference-parity milestones
 

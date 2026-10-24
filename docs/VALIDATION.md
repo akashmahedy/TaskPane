@@ -1,5 +1,21 @@
 # Private-alpha validation
 
+## Standard tabs, full Dock hiding and community presets — 2026-10-24
+
+Final source: `e078f80077741a839a17a04e5132fc23b194211f`. The optimized release and strict ad-hoc signature check passed. The executable SHA-256 is `a874ba29de6570becf3db3ea0dd2408f4df128fbfc075082f33eaf8f2870b1be`. **63 tests in 7 suites** passed, as did [source CI run 40069969093](https://github.com/akashmahedy/TaskPane/actions/runs/40069969093). OCR delegation reviewed all 13 selected production files, with 0 skipped and no remaining confirmed findings; the added test and documentation received manual review.
+
+Native checks on the user's Mac:
+
+- Two disposable TextEdit documents were merged into a standard AppKit tab group. The actual tab service passed seven read-only cases: two distinct tasks, stable refresh tokens, one selected task, exact group resolution, rejection of missing membership, disabling to one window and clearing disabled tab identities.
+- Update build `6ec6c50` (`f47b2cabaa548030c4ff28911510e99b20059c3c11613dcc3f2014ca1dea06fb`) activated both tabs with measured global foreground and exact AX focus. Minimize retained both task rows; restoring through the inactive tab selected that tab. The final close follow-up extracted that verified selection path into a shared helper.
+- The first native run exposed delayed tab-host publication. A later run exposed a macOS 27 close affordance acknowledging AXPress without closing the tab. The final build uses bounded exact selection readback and a verified explicit Close Tab menu command where available. Closing inactive disposable A on the final build removed A while B remained the only TextEdit window, with actual global foreground and AX keyboard focus. No working documents were closed.
+- Full Dock hiding was applied through TaskPane's UI. Native readback confirmed the requested edge, auto-hide and suppression delay, with the version-two recovery journal and quit restoration enabled. Normal Quit restored all three original values exactly and removed the completed recovery journal. Reopening TaskPane did not reapply the test setup.
+- All six community presets were visually inspected and applied through their own GUI buttons: DockLike, Bubbles, Rosé Pine, Translucent, Simply Transparent and Squircle. The illustrations showed their distinct geometry, opacity, shape and colors.
+- The current pre-test preferences were imported through the native picker and validation confirmation. A deep comparison of the saved preferences confirmed exact restoration. The app was left running with Accessibility connected and the user's setup restored.
+
+Limits: full Dock hiding suppresses normal edge reveal; Mission Control may still show the Dock, and a physical pointer-edge dwell was not automated. Forced-crash recovery and per-key external-edit conflicts have source/core coverage rather than a destructive native crash test. The menu close fallback currently verifies the English Close Tab label plus its standard Command-W binding; other locales rely on the native close affordance and report a failure if it is ineffective. Complete inaccessible/nonstandard/off-Space root discovery and Space assignment remain outside implemented scope. Physical drag, notification badges, fresh Screen Recording grants and all app/OS/display combinations were not re-tested in this follow-up. Earlier evidence below retains its original executable scope.
+
+
 This file records actual validation separately from planned coverage. Latest native follow-up: 2026-10-24.
 
 ## Build target

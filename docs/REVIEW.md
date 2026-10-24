@@ -1,5 +1,14 @@
 # Private-alpha code review
 
+## Standard tabs, Dock hiding and community presets — `e078f80`
+
+OCR delegation selected **13 production files; 13 reviewed, 0 skipped, 100% coverage**. The current Codex model reviewed the full new files and all selected diffs against OCR’s resolved Swift rules, without a separate provider or review subagents. The added test file and documentation excluded by default filters received manual review.
+
+Corrections include re-resolving the active tab’s host after minimize/restore, removing an originally absent Dock reveal delay when full hiding is disabled, discarding incomplete tab groups at the inspection budget, and preserving independently edited Dock keys during restoration. Native follow-up corrected asynchronous tab selection and macOS 27’s acknowledged but ineffective close-button press. Tab actions use retained AX group/button identity, direct native close controls or a verified Close Tab menu command; no window-title/index substitution, window-close fallback or synthetic shortcut targets an inactive tab. The menu fallback verifies the explicit English Close Tab label, Command-W with no additional modifiers, enabled state and exact selected/focused host, then checks disappearance without retrying a destructive command. Other language menus rely on the native tab close affordance and fail visibly if it is ineffective. Dock changes retain a versioned local journal and optional normal-quit restoration.
+
+**63 tests in 7 suites passed**. Native acceptance and the exact packaged executable are recorded in [VALIDATION.md](VALIDATION.md).
+
+
 ## Customization and taskbar feature update — `d66aab4`
 
 Delegated Open Code Review selected **24 production files; 24 reviewed, 0 skipped, 100% coverage**. OCR provided file selection and Swift rules; the current Codex model and independent Codex agents performed the review. No OCR-managed model provider or API key was used. The four changed/added test files and accompanying documentation were reviewed manually.

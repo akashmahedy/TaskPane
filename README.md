@@ -8,7 +8,7 @@ The main product priority is Lawand Taskbar-style window behavior and customizat
 
 ## In this alpha
 
-The customization update adds shared numeric limits, linked sizing, optional previews, native Space membership, middle-click handling, badges, reversible overlap avoidance and explicit Dock controls. Source `d66aab4` passed **58 tests**, delegated review of **24 production files** and GitHub CI. The final native thumbnail and copied-backup restoration passed; the earlier accepted drag/Start baseline remains documented separately. See [the reference comparison and adjustment ranges](docs/TASKBAR-PARITY.md), [review](docs/REVIEW.md) and [validation](docs/VALIDATION.md) for the exact source and native coverage; full reference parity is not claimed.
+The latest follow-up adds standard AppKit tabs as separate tasks, reversible full Dock hiding with normal-quit restoration, six Windhawk-inspired macOS presets and custom bar/button background colors. Source `e078f80` passed **63 tests in 7 suites**, delegated review of **13 production files** and [GitHub CI](https://github.com/akashmahedy/TaskPane/actions/runs/40069969093). See [the reference comparison and adjustment ranges](docs/TASKBAR-PARITY.md), [review](docs/REVIEW.md) and [validation](docs/VALIDATION.md) for exact native coverage; full reference parity across apps and macOS versions is not claimed.
 
 - Individual verified window buttons, with an adjacent mode that keeps each app's windows together without combining them. Explicit options can combine windows into app buttons always or when space is needed.
 - Activate, minimize, restore, close and full-screen controls, focused-window indicators, and app pin/unpin, hide, normal quit and exclusion commands.
@@ -21,14 +21,15 @@ The customization update adds shared numeric limits, linked sizing, optional pre
 - Native current-Space membership via a checked read-only compatibility adapter, with visibility fallback when unavailable. Windows assigned to all known desktops can be marked.
 - Independent window/pin drag switches, focused-click hide-app alternative, optional middle-click close, hidden/minimized indicators and optional Dock badges.
 - Opt-in overlap avoidance restores original geometry when disabled or quitting if the exact window and last applied geometry remain verifiable. User edits are preserved.
-- Explicit macOS Dock edge/auto-hide Apply and Restore, with original-value backup and conflict detection. No Dock setting changes on launch.
+- Standard AppKit tabs as separate tasks with independent activate/close actions and shared-window minimize/full-screen controls.
+- Explicit Dock edge/auto-hide/full-hide Apply and Restore, with a durable original-value backup, optional normal-quit restoration and preservation of later independent Dock edits. No Dock setting changes on launch.
 - Native CPU, memory, primary-interface network, internal-battery and clock widgets.
 - Per-widget placement: taskbar, menu bar, both, or off. CPU/memory sparklines in the taskbar.
 - System/light/dark appearance, accent color, bar transparency, icon/text sizes and item background opacity.
 - Linked 50–250% scale plus fixed/adaptive widths24–1,200pt, item heights20–240pt, icons8–128pt, text8–48pt and opacity0–100%; direct numeric input, padding, borders, shadow, spacing and density shortcuts.
 - Adjustable Start width/height, app icon and font size; menu dimensions fit the invoking display.
 - Bar length, edge distance, alignment and position offset; section ordering, automatic application/title/recent sorting and manual application ordering.
-- Five presets: Balanced, Windows style, Compact, Monitoring and Focus. Each has its own illustrated preview. Applying a preset preserves pins and exclusions. Fresh installations start with Windows style.
+- Eleven presets: Balanced, Windows style, Compact, Monitoring, Focus, DockLike, Bubbles, Rosé Pine, Translucent, Simply Transparent and Squircle. The six community-inspired macOS adaptations are credited in [theme references](docs/THEMES.md). Each has its own illustrated preview. Applying a preset preserves pins and exclusions. Fresh installations start with Windows style.
 - Automatic local preferences, versioned JSON export/import, strict validation and atomic writes.
 - Creator credit in the About screen and app footer.
 
@@ -77,7 +78,7 @@ The `--data-dir /absolute/test/folder` argument isolates preference storage for 
 ## Current limits
 
 - No continuous live recording, snapping, saved window layouts, global shortcuts, fan control, or GPU/temperature/SMART collectors yet. Hover previews are still snapshots, not a video stream.
-- Display filtering uses window geometry. Native Space membership is read-only and depends on macOS compatibility; automatic Space assignment/moving and complete inactive-tab discovery are not implemented. Enabling off-screen windows includes all discovered Spaces.
+- Display filtering uses window geometry. Native Space membership is read-only and depends on macOS compatibility; automatic Space assignment/moving and discovery of inaccessible nonstandard tab roots are not implemented. Standard AppKit tab groups are supported. Enabling off-screen windows includes all discovered Spaces.
 - The baseline collectors share one engine and currently sample while TaskPane runs, even when a widget is hidden. Demand-based per-collector scheduling is planned.
 - Network speed follows the primary routed interface, with a physical-interface fallback for VPNs; it is not a sum of all adapters. No public-IP request or connectivity probe is made.
 - Menu bar widgets are combined into one item. Graphs are available in taskbar CPU/memory widgets; menu bar values are text.
