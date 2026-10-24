@@ -70,6 +70,8 @@ struct AdvancedSettingsView: View {
     }
     private var spacing: some View {
         Surface(title: "Padding, borders & shadow", subtitle: "Adjust the space around the bar and inside every window button.") {
+            OptionalBackgroundColorRow(title: "Bar background color", value: Binding(get: { options.barBackgroundHex }, set: { settings.preferences.options.barBackgroundHex = $0 }))
+            OptionalBackgroundColorRow(title: "Button background color", value: Binding(get: { options.itemBackgroundHex }, set: { settings.preferences.options.itemBackgroundHex = $0 }))
             number("Horizontal bar padding", \.horizontalPadding, CustomizationLimits.padding)
             number("Vertical bar padding", \.verticalPadding, CustomizationLimits.padding)
             number("Section spacing", \.sectionSpacing, CustomizationLimits.spacing)
@@ -84,6 +86,8 @@ struct AdvancedSettingsView: View {
     }
     private var interactions: some View {
         Surface(title: "Window & pin interaction") {
+            toggle("Show standard macOS tabs as separate tasks", \.showStandardTabs)
+            Text("AppKit tabs have separate activate and close actions. Minimize and full screen affect their shared window. Browser page tabs remain inside their browser.").font(.system(size: 11)).foregroundStyle(.secondary)
             toggle("Allow dragging window buttons", \.allowWindowDragging)
             toggle("Allow dragging pinned apps", \.allowPinDragging)
             toggle("Middle-click closes the window", \.middleClickClosesWindow)
@@ -305,6 +309,20 @@ struct CurrentLayoutPreview: View {
                 Text(["Files", "Research", "Notes"][index])
                     .font(.system(size: dimensions.fontSize)).lineLimit(1)
             }
+        }
+    }
+}
+
+struct OptionalBackgroundColorRow: View {
+    let title: String
+    @Binding var value: String?
+    var body: some View {
+        SettingRow(title: title) {
+            ColorPicker(title, selection: Binding(get: { value.map { Color(taskPaneHex: $0) } ?? Color(nsColor: .windowBackgroundColor) }, set: { color in
+                guard let rgb = NSColor(color).usingColorSpace(.deviceRGB) else { return }
+                value = String(format: "%02X%02X%02X", Int((min(1, max(0, rgb.redComponent)) * 255).rounded()), Int((min(1, max(0, rgb.greenComponent)) * 255).rounded()), Int((min(1, max(0, rgb.blueComponent)) * 255).rounded()))
+            }), supportsOpacity: false).labelsHidden()
+            Button("Use system color") { value = nil }.disabled(value == nil)
         }
     }
 }

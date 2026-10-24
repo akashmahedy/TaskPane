@@ -28,6 +28,8 @@ public enum CustomizationLimits {
 /// Optional storage keeps existing schema-one preferences readable. Missing options
 /// inside this container receive the same defaults as a newly created setup.
 public struct TaskbarAdvancedOptions: Codable, Equatable {
+    public var barBackgroundHex: String?
+    public var itemBackgroundHex: String?
     public var horizontalPadding: Double = 10
     public var verticalPadding: Double = 6
     public var sectionSpacing: Double = 10
@@ -63,6 +65,7 @@ public struct TaskbarAdvancedOptions: Codable, Equatable {
     public var resizeOverlappingWindows: Bool = false
     public var hideInFullscreen: Bool = false
     public var useScreenFrame: Bool = false
+    public var showStandardTabs: Bool = true
     public var nativeSpaceTracking: Bool = true
     public var showAllSpacesIndicator: Bool = true
     public var hiddenDisplayIDs: [UInt32] = []
@@ -70,6 +73,7 @@ public struct TaskbarAdvancedOptions: Codable, Equatable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
+        case barBackgroundHex, itemBackgroundHex
         case horizontalPadding
         case verticalPadding
         case sectionSpacing
@@ -105,6 +109,7 @@ public struct TaskbarAdvancedOptions: Codable, Equatable {
         case resizeOverlappingWindows
         case hideInFullscreen
         case useScreenFrame
+        case showStandardTabs
         case nativeSpaceTracking
         case showAllSpacesIndicator
         case hiddenDisplayIDs
@@ -112,6 +117,8 @@ public struct TaskbarAdvancedOptions: Codable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        barBackgroundHex = try values.decodeIfPresent(String.self, forKey: .barBackgroundHex)
+        itemBackgroundHex = try values.decodeIfPresent(String.self, forKey: .itemBackgroundHex)
         horizontalPadding = try values.decodeIfPresent(Double.self, forKey: .horizontalPadding) ?? horizontalPadding
         verticalPadding = try values.decodeIfPresent(Double.self, forKey: .verticalPadding) ?? verticalPadding
         sectionSpacing = try values.decodeIfPresent(Double.self, forKey: .sectionSpacing) ?? sectionSpacing
@@ -147,12 +154,18 @@ public struct TaskbarAdvancedOptions: Codable, Equatable {
         resizeOverlappingWindows = try values.decodeIfPresent(Bool.self, forKey: .resizeOverlappingWindows) ?? resizeOverlappingWindows
         hideInFullscreen = try values.decodeIfPresent(Bool.self, forKey: .hideInFullscreen) ?? hideInFullscreen
         useScreenFrame = try values.decodeIfPresent(Bool.self, forKey: .useScreenFrame) ?? useScreenFrame
+        showStandardTabs = try values.decodeIfPresent(Bool.self, forKey: .showStandardTabs) ?? showStandardTabs
         nativeSpaceTracking = try values.decodeIfPresent(Bool.self, forKey: .nativeSpaceTracking) ?? nativeSpaceTracking
         showAllSpacesIndicator = try values.decodeIfPresent(Bool.self, forKey: .showAllSpacesIndicator) ?? showAllSpacesIndicator
         hiddenDisplayIDs = try values.decodeIfPresent([UInt32].self, forKey: .hiddenDisplayIDs) ?? hiddenDisplayIDs
     }
 
     public func validate() throws {
+        for color in [barBackgroundHex, itemBackgroundHex].compactMap({ $0 }) {
+            guard color.count == 6, color.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }) else {
+                throw PreferencesError.invalidValue(field: "background color", reason: "use six hexadecimal digits")
+            }
+        }
         try Self.check(horizontalPadding, in: CustomizationLimits.padding, field: "horizontalPadding")
         try Self.check(verticalPadding, in: CustomizationLimits.padding, field: "verticalPadding")
         try Self.check(sectionSpacing, in: CustomizationLimits.spacing, field: "sectionSpacing")

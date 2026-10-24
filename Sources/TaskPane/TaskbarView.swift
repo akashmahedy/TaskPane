@@ -133,7 +133,7 @@ struct TaskbarView: View {
             }
         }
         .font(.system(size: min(preferences.fontSize, layout.itemHeight - 2)))
-        .background(Color(nsColor: .windowBackgroundColor).opacity(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 1 : preferences.barOpacity))
+        .background((options.barBackgroundHex.map { Color(taskPaneHex: $0) } ?? Color(nsColor: .windowBackgroundColor)).opacity(NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 1 : preferences.barOpacity))
         .clipShape(RoundedRectangle(cornerRadius: layout.barCornerRadius))
         .overlay(RoundedRectangle(cornerRadius: layout.barCornerRadius).stroke(Color.primary.opacity(options.barBorderOpacity), lineWidth: options.barBorderWidth))
         .tint(Color(taskPaneHex: preferences.accentHex))
@@ -268,7 +268,7 @@ struct TaskbarView: View {
                         Image(nsImage: AppIcons.icon(path: app.url?.path)).resizable().frame(width: iconSize, height: iconSize)
                         if !vertical && preferences.showAppNames { Text(app.name).lineLimit(1) }
                     }.frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(preferences.options.iconOnlyUsesItemHeight ? layout.itemHeight : preferences.options.iconOnlyWidth)), height: layout.itemHeight)
-                        .background(Color.primary.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
+                        .background((preferences.options.itemBackgroundHex.map { Color(taskPaneHex: $0) } ?? Color.primary).opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
                         .contentShape(Rectangle())
                         .taskPaneDrag(enabled: options.allowWindowDragging, payload: app.bundleIdentifier ?? "app:\(app.name)")
                 }.buttonStyle(.plain)
@@ -369,7 +369,7 @@ struct WindowButton: View {
             }
             .padding(.horizontal, vertical ? min(2, preferences.options.itemHorizontalPadding) : preferences.options.itemHorizontalPadding)
             .frame(width: vertical ? nil : width, height: layout.itemHeight)
-            .background(Color.primary.opacity(layout.itemOpacity + (hovered ? 0.07 : entry.isFocused ? 0.05 : 0)), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
+            .background((preferences.options.itemBackgroundHex.map { Color(taskPaneHex: $0) } ?? Color.primary).opacity(layout.itemOpacity + (hovered ? 0.07 : entry.isFocused ? 0.05 : 0)), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
             .overlay(alignment: .bottom) {
                 if layout.showActiveIndicator && entry.isFocused {
                     Capsule().fill(Color(taskPaneHex: preferences.accentHex)).frame(width: 20, height: 3)
@@ -416,13 +416,13 @@ struct WindowContextCommands: View {
         return windows.apps.first { $0.pid == entry.pid && $0.bundleIdentifier == entry.bundleIdentifier }
     }
     var body: some View {
-        Text("Window · \(entry.appName)")
-        Button("Activate window") { windows.activate(entry) }
+        Text("\(entry.isNativeTab ? "Tab" : "Window") · \(entry.appName)")
+        Button(entry.isNativeTab ? "Activate tab" : "Activate window") { windows.activate(entry) }
         Button(entry.isMinimized ? "Restore window" : "Minimize window") {
             if entry.isMinimized { windows.activate(entry) } else { windows.minimize(entry) }
         }
         Button("Toggle full screen") { windows.toggleFullscreen(entry) }
-        Button("Close window", role: .destructive) { windows.close(entry) }
+        Button(entry.isNativeTab ? "Close tab" : "Close window", role: .destructive) { windows.close(entry) }
         Divider()
         Text("Application")
         if let path = application?.url?.path {
@@ -462,7 +462,7 @@ struct GroupedWindowButton: View {
                     if !vertical && preferences.showAppNames { Text(first.appName).lineLimit(1) }
                     if !vertical { Text("\(entries.count)").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary) }
                 }.padding(.horizontal, preferences.options.itemHorizontalPadding).frame(width: vertical ? nil : (preferences.showAppNames ? width : CGFloat(preferences.options.iconOnlyUsesItemHeight ? layout.itemHeight : preferences.options.iconOnlyWidth)), height: layout.itemHeight)
-                    .background(Color.primary.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
+                    .background((preferences.options.itemBackgroundHex.map { Color(taskPaneHex: $0) } ?? Color.primary).opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: layout.itemCornerRadius))
                     .contentShape(Rectangle())
                     .taskPaneDrag(enabled: preferences.options.allowWindowDragging, payload: first.arrangementKey)
             }

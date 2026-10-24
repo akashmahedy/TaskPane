@@ -23,12 +23,13 @@ struct WindowEntry: Identifiable, Sendable {
     let captureWindowID: CGWindowID?
     let isOnCurrentSpace: Bool?
     let isOnAllSpaces: Bool
+    let isNativeTab: Bool
 
     init(id: UInt32, pid: Int32, title: String, appName: String,
          bundleIdentifier: String?, bounds: CGRect, isMinimized: Bool,
          isOnScreen: Bool, isDialog: Bool = false, isFocused: Bool = false,
          isHidden: Bool = false, isFullscreen: Bool = false, captureWindowID: CGWindowID? = nil,
-         isOnCurrentSpace: Bool? = nil, isOnAllSpaces: Bool = false) {
+         isOnCurrentSpace: Bool? = nil, isOnAllSpaces: Bool = false, isNativeTab: Bool = false) {
         self.id = id
         self.pid = pid
         self.title = title
@@ -44,6 +45,7 @@ struct WindowEntry: Identifiable, Sendable {
         self.captureWindowID = captureWindowID
         self.isOnCurrentSpace = isOnCurrentSpace
         self.isOnAllSpaces = isOnAllSpaces
+        self.isNativeTab = isNativeTab
     }
 }
 
@@ -80,6 +82,7 @@ final class WindowService: ObservableObject {
     private let inspector = WindowInspector()
     private let workState = WindowWorkState()
     private var nativeSpaceTracking = true
+    private var showStandardTabs = true
     private var timer: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var refreshInProgress = false
@@ -167,6 +170,7 @@ final class WindowService: ObservableObject {
         refreshInProgress = true
         let trusted = accessibilityGranted
         let trackSpaces = nativeSpaceTracking
+        let standardTabs = showStandardTabs
         let currentLifecycle = lifecycle
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let runningApplications = NSWorkspace.shared.runningApplications.filter {
@@ -208,7 +212,7 @@ final class WindowService: ObservableObject {
         let workState = workState
         worker.async { [weak self] in
             guard workState.isActive else { return }
-            let entries = inspector.enumerate(apps: runningApps, trusted: trusted, frontmostPID: frontmostPID, trackSpaces: trackSpaces)
+            let entries = inspector.enumerate(apps: runningApps, trusted: trusted, frontmostPID: frontmostPID, trackSpaces: trackSpaces, showTabs: standardTabs)
             let knownWindowIDs = inspector.knownWindowIDs
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.stopped, self.lifecycle == currentLifecycle else { return }
@@ -232,6 +236,12 @@ final class WindowService: ObservableObject {
                 }
             }
         }
+    }
+
+    func configureStandardTabs(enabled: Bool) {
+        guard showStandardTabs != enabled else { return }
+        showStandardTabs = enabled
+        refresh()
     }
 
     func configureSpaceTracking(enabled: Bool) {
@@ -676,6 +686,7 @@ private final class WindowInspector: @unchecked Sendable {
     }
 
     private let spaces = NativeSpaceReader()
+    private let tabs = NativeTabService()
     private var retained: [UInt32: RetainedWindow] = [:]
     private var nextToken: UInt32 = 1
     private var inspectionStartIndex = 0
@@ -686,11 +697,12 @@ private final class WindowInspector: @unchecked Sendable {
 
     /// Read only on the serial inspection queue. Failed metadata reads do not
     /// erase a still-retained exact member; confirmed closure does.
-    var knownWindowIDs: [String] { retained.keys.sorted().map { String($0) } }
+    var knownWindowIDs: [String] { retained.keys.sorted().map { String($0) } + tabs.knownIDs }
 
-    func enumerate(apps: [RunningAppEntry], trusted: Bool, frontmostPID: Int32?, trackSpaces: Bool) -> [WindowEntry] {
+    func enumerate(apps: [RunningAppEntry], trusted: Bool, frontmostPID: Int32?, trackSpaces: Bool, showTabs: Bool) -> [WindowEntry] {
         guard trusted, AXIsProcessTrusted() else {
             retained.removeAll()
+            _ = tabs.entries([], enabled: false)
             return []
         }
         let runningPIDs = Set(apps.map(\.pid))
@@ -807,6 +819,9 @@ private final class WindowInspector: @unchecked Sendable {
                     isOnCurrentSpace: current, isOnAllSpaces: allDesktops)
             }
         }
+        entries = tabs.entries(entries.compactMap { entry in
+            retained[entry.id].map { (entry, $0.element) }
+        }, enabled: showTabs)
         return entries.sorted {
             let appComparison = $0.appName.localizedStandardCompare($1.appName)
             if appComparison != .orderedSame { return appComparison == .orderedAscending }
@@ -830,11 +845,11 @@ private final class WindowInspector: @unchecked Sendable {
         guard AXIsProcessTrusted() else {
             return .failure("Accessibility access was removed. Enable it to control windows.")
         }
-        guard let record = retained[entry.id], record.pid == entry.pid else {
-            return .failure("This window is no longer in the verified list. Refresh and try again.")
-        }
         guard let inventory = applicationWindows(pid: entry.pid, timeout: actionTimeout) else {
             return .failure("This application did not provide a complete window list. No action was sent; try again.")
+        }
+        guard let record = actionRecord(entry, inventory: inventory) else {
+            return .failure("This window or tab is no longer in the verified list. Refresh and try again.")
         }
         // Exact AX object membership is the action identity. Never substitute a
         // similarly named, positioned, minimized, or newly created window.
@@ -853,7 +868,8 @@ private final class WindowInspector: @unchecked Sendable {
         if case .click(let secondClickMinimizes, let hideApplication) = requestedAction {
             let focus = focusState(of: inventory.application, timeout: actionTimeout)
             if (secondClickMinimizes || hideApplication), !current.minimized, focus.frontmost,
-               let focused = focus.element, CFEqual(focused, record.element) {
+               let focused = focus.element, CFEqual(focused, record.element),
+               !entry.isNativeTab || tabs.isSelected(entry) {
                 action = hideApplication ? .hideApplication : .minimize
             } else {
                 action = .activate
@@ -877,19 +893,30 @@ private final class WindowInspector: @unchecked Sendable {
             guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid else {
                 return .failure("Window action cancelled.")
             }
-            var raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
+            var activationElement = record.element
+            if entry.isNativeTab {
+                guard actionIsCurrent(), tabs.select(entry),
+                      let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+                      let selected = tabs.window(for: entry, in: fresh.elements), tabs.isSelected(entry) else {
+                    return .failure("The selected tab changed or could not be selected. Refresh and try again.")
+                }
+                activationElement = selected
+            }
+            var raised = AXUIElementPerformAction(activationElement, kAXRaiseAction as CFString)
             if current.minimized, raised == .cannotComplete {
                 // Restore animation can outlast the first raise. This retry is
                 // non-destructive, bounded, and revalidates exact membership.
                 Thread.sleep(forTimeInterval: 0.12)
                 guard actionIsCurrent(), AXIsProcessTrusted(), owner(of: record.element) == entry.pid,
                       let fresh = applicationWindows(pid: entry.pid, timeout: actionTimeout),
-                      fresh.elements.contains(where: { CFEqual($0, record.element) }) else {
+                      let retry = actionRecord(entry, inventory: fresh),
+                      fresh.elements.contains(where: { CFEqual($0, retry.element) }),
+                      !entry.isNativeTab || tabs.isSelected(entry) else {
                     return .failure("The restored window is no longer available. No further action was sent.")
                 }
-                AXUIElementSetMessagingTimeout(record.element, actionTimeout)
+                AXUIElementSetMessagingTimeout(retry.element, actionTimeout)
                 guard actionIsCurrent() else { return .failure("Window action cancelled.") }
-                raised = AXUIElementPerformAction(record.element, kAXRaiseAction as CFString)
+                raised = AXUIElementPerformAction(retry.element, kAXRaiseAction as CFString)
             }
             return raised == .success ? .raised : .failure("macOS could not raise this window (Accessibility error \(raised.rawValue)).")
         case .minimize:
@@ -908,6 +935,10 @@ private final class WindowInspector: @unchecked Sendable {
             }
             return .failure("macOS could not minimize this window (Accessibility error \(result.rawValue)).")
         case .close:
+            if entry.isNativeTab {
+                let result = tabs.close(entry)
+                return result == .success ? .success : .failure("This tab does not expose an available close control (Accessibility error \(result.rawValue)).")
+            }
             guard let button = elementAttribute(record.element, kAXCloseButtonAttribute, timeout: actionTimeout),
                   owner(of: button) == entry.pid else {
                 return .failure("This window does not expose a verified close button. No close action was sent.")
@@ -991,8 +1022,9 @@ private final class WindowInspector: @unchecked Sendable {
             ActivationVerification(message: message, deadline: ProcessInfo.processInfo.systemUptime)
         }
         func isCurrent() -> Bool { workState.isCurrent(request) && AXIsProcessTrusted() }
-        guard isCurrent(), let record = retained[entry.id], record.pid == entry.pid,
-              let inventory = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+        guard isCurrent(), let inventory = applicationWindows(pid: entry.pid, timeout: actionTimeout),
+              let record = actionRecord(entry, inventory: inventory),
+              !entry.isNativeTab || tabs.isSelected(entry),
               inventory.elements.contains(where: { CFEqual($0, record.element) }),
               owner(of: record.element) == entry.pid,
               snapshot(of: record.element, timeout: actionTimeout) != nil else {
@@ -1036,7 +1068,18 @@ private final class WindowInspector: @unchecked Sendable {
         return failure("macOS did not give this application foreground focus. Try Activate again.")
     }
 
+    private func actionRecord(_ entry: WindowEntry, inventory: ApplicationInventory) -> RetainedWindow? {
+        if entry.isNativeTab {
+            guard let element = tabs.window(for: entry, in: inventory.elements),
+                  let snapshot = snapshot(of: element, timeout: actionTimeout) else { return nil }
+            return RetainedWindow(pid: entry.pid, element: element, snapshot: snapshot, sampledAt: ProcessInfo.processInfo.systemUptime)
+        }
+        guard let record = retained[entry.id], record.pid == entry.pid else { return nil }
+        return record
+    }
+
     private func cache(_ snapshot: WindowSnapshot, for token: UInt32, record: RetainedWindow) {
+        guard token < 0x8000_0000 else { return }
         retained[token] = RetainedWindow(pid: record.pid, element: record.element,
                                          snapshot: snapshot, sampledAt: ProcessInfo.processInfo.systemUptime)
     }
@@ -1047,7 +1090,7 @@ private final class WindowInspector: @unchecked Sendable {
             return existing.key
         }
         // Tokens are never recycled during this process, including after a close.
-        guard nextToken != 0 else { return nil }
+        guard nextToken < 0x8000_0000 else { return nil }
         let token = nextToken
         nextToken &+= 1
         retained[token] = RetainedWindow(pid: pid, element: element, snapshot: snapshot, sampledAt: sampledAt)

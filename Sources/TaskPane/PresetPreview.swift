@@ -49,6 +49,9 @@ struct PresetPreview: View {
 
     @ViewBuilder private func desktopWindows(width: CGFloat) -> some View {
         switch preset {
+        case .dockLike, .bubbles, .rosePine, .translucent, .transparent, .squircle:
+            sampleWindow("Safari · Research", symbol: "safari", tint: accent, width: width * 0.56, height: 62)
+                .offset(x: width * 0.10, y: 29)
         case .balanced:
             sampleWindow("Files", symbol: "folder.fill", tint: .cyan, width: width * 0.42, height: 61)
                 .offset(x: width * 0.49, y: 33)
@@ -137,6 +140,8 @@ struct PresetPreview: View {
 
     @ViewBuilder private func taskbar(width: CGFloat, height: CGFloat) -> some View {
         switch preset {
+        case .dockLike, .bubbles, .rosePine, .translucent, .transparent, .squircle:
+            inspiredBar(width: width, height: height)
         case .balanced:
             HStack(spacing: 5) {
                 Image(systemName: "square.grid.2x2.fill").font(.system(size: 10)).foregroundStyle(accent)
@@ -198,6 +203,29 @@ struct PresetPreview: View {
         }
     }
 
+    private func inspiredBar(width: CGFloat, height: CGFloat) -> some View {
+        let layout = preferences.layout
+        let options = preferences.options
+        let background = options.barBackgroundHex.map { Color(taskPaneHex: $0) } ?? panel
+        let fill = options.itemBackgroundHex.map { Color(taskPaneHex: $0) } ?? ink
+        return HStack(spacing: CGFloat(layout.itemSpacing) * 0.35) {
+            ForEach(Array(["safari", "folder.fill", "note.text"].enumerated()), id: \.offset) { index, symbol in
+                HStack(spacing: 3) {
+                    Image(systemName: symbol).foregroundStyle(index == 0 ? accent : ink.opacity(0.8))
+                    if preferences.showWindowTitles { Text(index == 0 ? "Research" : index == 1 ? "Files" : "Notes").font(.system(size: 6)) }
+                }
+                .font(.system(size: 12)).padding(.horizontal, 6)
+                .frame(height: CGFloat(layout.itemHeight) * 0.55)
+                .background(fill.opacity(layout.itemOpacity), in: RoundedRectangle(cornerRadius: CGFloat(layout.itemCornerRadius) * 0.5))
+                .overlay(alignment: .bottom) { if index == 0 { Capsule().fill(accent).frame(width: 10, height: 2) } }
+            }
+        }
+        .frame(width: barWidth(in: width), height: 32)
+        .background(background.opacity(preferences.barOpacity), in: RoundedRectangle(cornerRadius: barRadius))
+        .overlay(RoundedRectangle(cornerRadius: barRadius).stroke(ink.opacity(options.barBorderOpacity), lineWidth: options.barBorderWidth * 0.5))
+        .offset(x: barOrigin(in: width), y: height - 32 - edgeInset)
+    }
+
     private func barWidth(in width: CGFloat) -> CGFloat {
         width * CGFloat(preferences.layout.lengthPercent / 100)
     }
@@ -245,6 +273,7 @@ struct PresetPreview: View {
 
     private var summary: String {
         switch preset {
+        case .dockLike, .bubbles, .rosePine, .translucent, .transparent, .squircle: return preset.subtitle
         case .balanced: return "Separate window titles and CPU and memory graphs along the bottom."
         case .windows: return "A full-width bottom taskbar with separate titled windows and a clock."
         case .compact: return "A short centered bar with one icon per window, with monitoring in the top menu bar."

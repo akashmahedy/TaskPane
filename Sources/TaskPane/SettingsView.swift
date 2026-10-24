@@ -275,7 +275,7 @@ struct SettingsView: View {
                     HStack { Text(identifier).font(.system(size: 12, design: .monospaced)); Spacer(); Button("Remove") { settings.preferences.excludedBundleIdentifiers.removeAll { $0 == identifier } } }
                 }
             }
-            Text("TaskPane leaves your macOS Dock settings unchanged. The bar sits inside the display’s available area.")
+            Text("Optional Dock hiding and restoration are available under More controls. Dock changes require Apply Dock setup.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -355,6 +355,9 @@ struct SettingsView: View {
     }
 
     private var presets: some View {
+        VStack(alignment: .leading, spacing: 16) {
+        Text("The six Windhawk-inspired looks are native macOS adaptations. Their illustrations reflect each preset's own shape, colors and transparency.").font(.system(size: 12)).foregroundStyle(.secondary)
+        Link("Windhawk community theme references & original authors", destination: URL(string: "https://github.com/ramensoftware/windows-11-taskbar-styling-guide#themes")!)
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
             ForEach(BuiltInPreset.allCases) { preset in
                 Surface {
@@ -365,6 +368,7 @@ struct SettingsView: View {
                         .buttonStyle(.bordered).tint(settings.activePreset == preset.rawValue ? .green : accent)
                 }
             }
+        }
         }
     }
 

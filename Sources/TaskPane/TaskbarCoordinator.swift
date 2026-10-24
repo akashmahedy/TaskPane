@@ -34,6 +34,7 @@ final class TaskbarCoordinator {
         settings.$preferences.sink { [weak self] preferences in
             guard let self else { return }
             self.layout(preferences)
+            self.windows.configureStandardTabs(enabled: preferences.options.showStandardTabs)
             self.windows.configureSpaceTracking(enabled: preferences.options.nativeSpaceTracking)
             ApplicationBadgeService.shared.update(enabled: preferences.options.showAppBadges)
             if !preferences.options.hoverPreviewsEnabled { WindowPreviewService.shared.clear() }

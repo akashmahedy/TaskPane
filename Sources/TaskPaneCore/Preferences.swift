@@ -380,9 +380,16 @@ public struct TaskPanePreferences: Codable, Equatable {
 
 public enum BuiltInPreset: String, CaseIterable, Identifiable {
     case balanced, windows, compact, monitoring, focus
+    case dockLike, bubbles, rosePine, translucent, transparent, squircle
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
+        case .dockLike: return "DockLike"
+        case .bubbles: return "Bubbles"
+        case .rosePine: return "Rosé Pine"
+        case .translucent: return "Translucent"
+        case .transparent: return "Simply Transparent"
+        case .squircle: return "Squircle"
         case .balanced: return "Balanced"
         case .windows: return "Windows style"
         case .compact: return "Compact"
@@ -392,6 +399,12 @@ public enum BuiltInPreset: String, CaseIterable, Identifiable {
     }
     public var subtitle: String {
         switch self {
+        case .dockLike: return "Windhawk inspired · Amber. A centered floating dock with roomy icons."
+        case .bubbles: return "Windhawk inspired · m417z. Separated pill buttons on a clear bar."
+        case .rosePine: return "Windhawk inspired · asev. A muted violet surface with rose highlights."
+        case .translucent: return "Windhawk inspired. A wide, softly translucent taskbar."
+        case .transparent: return "Windhawk inspired. Minimal icons floating over your desktop."
+        case .squircle: return "Windhawk inspired. Rounded square buttons and a compact silhouette."
         case .balanced: return "A floating taskbar with readable titles and CPU/RAM graphs."
         case .windows: return "Full-width, square-edged taskbar with wide window buttons."
         case .compact: return "A small floating window bar, with monitoring in the menu bar."
@@ -403,6 +416,52 @@ public enum BuiltInPreset: String, CaseIterable, Identifiable {
         var result = TaskPanePreferences()
         var layout = LayoutCustomization()
         switch self {
+        case .dockLike, .bubbles, .rosePine, .translucent, .transparent, .squircle:
+            result.appMode = .taskbar
+            result.grouping = .never
+            result.showWindowTitles = false
+            result.showAppNames = false
+            result.showClock = false
+            result.barHeight = 56
+            result.iconSize = 28
+            layout.lengthPercent = 65
+            layout.edgeOffset = 12
+            layout.itemSizing = .fixed
+            layout.itemWidth = 44
+            layout.minItemWidth = 44
+            layout.maxItemWidth = 100
+            layout.itemHeight = 40
+            layout.itemSpacing = 8
+            layout.itemCornerRadius = 12
+            layout.barCornerRadius = 18
+            layout.showDividers = false
+            var options = TaskbarAdvancedOptions()
+            result.widgets = WidgetKind.allCases.map { WidgetConfiguration(kind: $0, placement: .off) }
+            switch self {
+            case .dockLike:
+                layout.lengthPercent = 58; layout.itemHeight = 44; layout.itemCornerRadius = 10
+                result.barOpacity = 0.88; options.horizontalPadding = 14
+            case .bubbles:
+                layout.lengthPercent = 78; layout.itemCornerRadius = 24; layout.itemSpacing = 14
+                layout.itemOpacity = 0.22; result.barOpacity = 0; options.barBorderWidth = 0; options.barShadow = false
+            case .rosePine:
+                result.theme = .dark; result.accentHex = "EBBCBA"; result.barOpacity = 1
+                options.barBackgroundHex = "191724"; options.itemBackgroundHex = "403D52"
+                layout.itemOpacity = 0.8; layout.lengthPercent = 94; layout.itemCornerRadius = 6
+                result.showWindowTitles = true; result.fontSize = 12; layout.maxItemWidth = 220; layout.itemSizing = .adaptive
+            case .translucent:
+                layout.lengthPercent = 100; layout.edgeOffset = 0; layout.barCornerRadius = 0
+                result.barOpacity = 0.36; layout.itemSpacing = 6; layout.itemOpacity = 0.08
+            case .transparent:
+                layout.lengthPercent = 88; layout.itemOpacity = 0; result.barOpacity = 0
+                options.barBorderWidth = 0; options.barShadow = false; layout.itemSpacing = 18
+            case .squircle:
+                layout.lengthPercent = 70; layout.itemCornerRadius = 16; layout.barCornerRadius = 24
+                layout.itemOpacity = 0.18; layout.itemHeight = 46; layout.itemSpacing = 5
+                result.barOpacity = 0.94; result.accentHex = "A078E8"
+            default: break
+            }
+            result.options = options
         case .balanced:
             layout.lengthPercent = 92
             layout.edgeOffset = 12

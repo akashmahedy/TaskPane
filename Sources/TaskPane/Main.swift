@@ -65,6 +65,7 @@ final class TaskPaneAppDelegate: NSObject, NSApplicationDelegate {
         terminationPrepared = true
         Task { @MainActor in
             await bars?.prepareToClose()
+            DockIntegrationService.shared.restoreForTermination()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

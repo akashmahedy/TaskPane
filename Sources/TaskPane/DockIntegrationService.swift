@@ -3,6 +3,7 @@ import Combine
 import CoreFoundation
 import Darwin
 import Foundation
+import TaskPaneCore
 
 enum DockEdge: String, Codable, CaseIterable, Identifiable {
     case bottom, left, right
@@ -13,12 +14,14 @@ enum DockEdge: String, Codable, CaseIterable, Identifiable {
 struct DockConfiguration: Equatable {
     var edge: DockEdge
     var autoHide: Bool
+    var fullyHidden: Bool = false
 }
 
 /// Dock changes happen only after an explicit Apply or Restore action. The local
 /// snapshot tracks key presence so restoring can remove keys that were absent.
 @MainActor
 final class DockIntegrationService: ObservableObject {
+    static let shared = DockIntegrationService()
     @Published private(set) var current = DockConfiguration(edge: .bottom, autoHide: false)
     @Published private(set) var hasBackup = false
     @Published private(set) var canRestore = false
@@ -26,18 +29,14 @@ final class DockIntegrationService: ObservableObject {
     @Published private(set) var notice: String?
     @Published private(set) var error: String?
 
-    private struct StoredValues: Codable, Equatable {
-        var orientation: String?
-        var autoHide: Bool?
-        var configuration: DockConfiguration {
-            DockConfiguration(edge: orientation.flatMap(DockEdge.init(rawValue:)) ?? .bottom, autoHide: autoHide ?? false)
-        }
-    }
+    private typealias StoredValues = DockPreferenceValues
     private struct Snapshot: Codable {
-        var version = 1
+        var version = 2
         var original: StoredValues
         var applied: StoredValues
+        var restoreWhenQuitting: Bool?
     }
+    @Published private(set) var restoreWhenQuitting = true
     private let domain = "com.apple.dock" as CFString
     private let snapshotURL: URL
     private var snapshot: Snapshot?
@@ -57,13 +56,22 @@ final class DockIntegrationService: ObservableObject {
                 let data = try Data(contentsOf: snapshotURL)
                 guard data.count < 16_384 else { throw DockError.message("The saved Dock backup is too large.") }
                 let saved = try JSONDecoder().decode(Snapshot.self, from: data)
-                guard saved.version == 1,
-                      saved.original.orientation.map({ DockEdge(rawValue: $0) != nil }) ?? true,
+                guard (1...2).contains(saved.version), saved.original.isValid, saved.applied.isValid,
                       saved.applied.orientation.flatMap(DockEdge.init(rawValue:)) != nil,
                       saved.applied.autoHide != nil else {
                     throw DockError.message("The saved Dock backup has an unsupported format.")
                 }
-                snapshot = saved
+                var migrated = saved
+                if saved.version == 1 {
+                    // Older TaskPane managed only two keys. Never claim ownership
+                    // of an existing reveal delay during legacy recovery.
+                    let delay = try readValues().revealDelay
+                    migrated.original.revealDelay = delay
+                    migrated.applied.revealDelay = delay
+                    migrated.version = 2
+                }
+                snapshot = migrated
+                restoreWhenQuitting = migrated.restoreWhenQuitting ?? false
             } catch { self.error = "Could not read the saved Dock setup: \(error.localizedDescription)" }
         }
         refresh()
@@ -72,14 +80,14 @@ final class DockIntegrationService: ObservableObject {
     func refresh() {
         do {
             let values = try readValues()
-            current = values.configuration
+            current = configuration(values)
             hasBackup = snapshot != nil || FileManager.default.fileExists(atPath: snapshotURL.path)
-            canRestore = snapshot.map { $0.applied == values } ?? false
-            originalDescription = snapshot.map { describe($0.original.configuration) }
+            canRestore = snapshot != nil
+            originalDescription = snapshot.map { describe(configuration($0.original)) }
         } catch { self.error = error.localizedDescription }
     }
 
-    func apply(_ proposed: DockConfiguration) {
+    func apply(_ proposed: DockConfiguration, restoreOnQuit: Bool = true) {
         error = nil; notice = nil
         do {
             let before = try readValues()
@@ -89,10 +97,12 @@ final class DockIntegrationService: ObservableObject {
             if let snapshot, snapshot.applied != before {
                 throw DockError.message("The Dock changed after TaskPane last adjusted it. Keep the current setup before applying another change.")
             }
-            let applied = StoredValues(orientation: proposed.edge.rawValue, autoHide: proposed.autoHide)
-            let saved = Snapshot(original: snapshot?.original ?? before, applied: applied)
+            let applied = before.applying(orientation: proposed.edge.rawValue, autoHide: proposed.autoHide,
+                                          fullyHidden: proposed.fullyHidden, original: snapshot?.original)
+            let saved = Snapshot(original: snapshot?.original ?? before, applied: applied, restoreWhenQuitting: restoreOnQuit)
             try save(saved) // A failed backup save must not modify the Dock.
             snapshot = saved
+            restoreWhenQuitting = restoreOnQuit
             try writeValues(applied)
             let restarted = try restartDock()
             notice = restarted ? "Dock settings applied. The Dock is restarting." : "Dock settings saved. They apply when the Dock next starts."
@@ -104,18 +114,27 @@ final class DockIntegrationService: ObservableObject {
         error = nil; notice = nil
         do {
             guard let saved = snapshot else { throw DockError.message("There is no readable Dock backup to restore.") }
-            guard try readValues() == saved.applied else {
-                throw DockError.message("Your Dock settings changed after TaskPane adjusted them. Restore leaves those newer choices unchanged.")
-            }
-            try writeValues(saved.original)
+            let current = try readValues()
+            let restored = current.restoring(original: saved.original, applied: saved.applied)
+            try writeValues(restored)
             // Record a completed restoration before restarting so a restart failure
             // cannot make the UI offer another destructive restoration.
             try FileManager.default.removeItem(at: snapshotURL)
             snapshot = nil
             let restarted = try restartDock()
-            notice = restarted ? "Your original Dock settings were restored. The Dock is restarting." : "Your original Dock settings were restored. They apply when the Dock next starts."
+            notice = restarted ? "Your original Dock settings were restored; any newer independent edits were kept. The Dock is restarting." : "Your original Dock settings were restored; any newer independent edits were kept. They apply when the Dock next starts."
         } catch { self.error = error.localizedDescription }
         refresh()
+    }
+
+    func restoreForTermination() {
+        guard snapshot?.restoreWhenQuitting == true else { return }
+        restore()
+    }
+
+    private func configuration(_ values: StoredValues) -> DockConfiguration {
+        DockConfiguration(edge: values.orientation.flatMap(DockEdge.init(rawValue:)) ?? .bottom,
+                          autoHide: values.autoHide ?? false, fullyHidden: values.fullyHidden)
     }
 
     /// Removes only TaskPane's local recovery file. It never writes Dock keys.
@@ -136,13 +155,19 @@ final class DockIntegrationService: ObservableObject {
         if let orientation, !(orientation is String) { throw DockError.message("The Dock orientation setting has an unsupported value.") }
         if let orientation = orientation as? String, DockEdge(rawValue: orientation) == nil { throw DockError.message("The Dock orientation setting has an unsupported value.") }
         if let autoHide, CFGetTypeID(autoHide) != CFBooleanGetTypeID() { throw DockError.message("The Dock auto-hide setting has an unsupported value.") }
-        return StoredValues(orientation: orientation as? String, autoHide: autoHide as? Bool)
+        let delay = CFPreferencesCopyValue("autohide-delay" as CFString, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        if let delay, CFGetTypeID(delay) != CFNumberGetTypeID() { throw DockError.message("The Dock reveal delay has an unsupported value.") }
+        let values = StoredValues(orientation: orientation as? String, autoHide: autoHide as? Bool,
+                                  revealDelay: (delay as? NSNumber)?.doubleValue)
+        guard values.isValid else { throw DockError.message("The Dock preferences contain unsupported values.") }
+        return values
     }
 
     private func writeValues(_ values: StoredValues) throws {
         CFPreferencesSetValue("orientation" as CFString, values.orientation.map { $0 as CFString }, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
         let autoHide: CFBoolean? = values.autoHide.map { $0 ? kCFBooleanTrue : kCFBooleanFalse }
         CFPreferencesSetValue("autohide" as CFString, autoHide, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        CFPreferencesSetValue("autohide-delay" as CFString, values.revealDelay.map { NSNumber(value: $0) }, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) else {
             throw DockError.message("The Dock preferences could not be saved. The local recovery backup was kept.")
         }
@@ -172,7 +197,7 @@ final class DockIntegrationService: ObservableObject {
     }
 
     private func describe(_ values: DockConfiguration) -> String {
-        "\(values.edge.title), auto-hide \(values.autoHide ? "on" : "off")"
+        "\(values.edge.title), \(values.fullyHidden ? "fully hidden" : values.autoHide ? "auto-hide on" : "auto-hide off")"
     }
     private enum DockError: LocalizedError {
         case message(String)
