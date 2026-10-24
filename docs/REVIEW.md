@@ -1,5 +1,14 @@
 # Private-alpha code review
 
+## Customization and taskbar feature update — `d66aab4`
+
+Delegated Open Code Review selected **24 production files; 24 reviewed, 0 skipped, 100% coverage**. OCR provided file selection and Swift rules; the current Codex model and independent Codex agents performed the review. No OCR-managed model provider or API key was used. The four changed/added test files and accompanying documentation were reviewed manually.
+
+The review fixed overlap-restoration provenance across transient inventory/readback failures, safe restoration retries at quit, expanded-bar reveal timing, hidden-panel clipping at adjacent displays, metadata-read budgeting, source-display preview sizing, icon-only overflow estimates, Start pinned-icon fitting and vertical preview geometry. A harness executing the real overlap service with controlled read/write outcomes passed ten cases, including failed writes/readbacks, disappearing presentation rows and preserved user geometry. This is service-level evidence, not a physical window test.
+
+The additional read-only native Space adapter was reviewed independently against primary C ABI declarations, Copy ownership and fallback behavior. Its native window IDs remain metadata; normal actions retain exact AX members. Native follow-up also corrected Space membership bypassing visibility admission, the copied-JSON picker filter and an older-compiler type-check timeout in the live illustration. No confirmed findings remain in the reviewed source. Runtime acceptance is recorded separately in [VALIDATION.md](VALIDATION.md).
+
+
 Review date: 2026-10-23. Alibaba Open Code Review 1.13.1 ran in delegation mode: `ocr delegate preview` selected files and `ocr delegate rule` resolved rules. Codex performed the review. No OCR-managed LLM provider was configured.
 
 ## Coverage

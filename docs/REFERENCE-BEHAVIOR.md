@@ -1,5 +1,7 @@
 # Taskbar reference behavior ledger
 
+The current customization/feature matrix and remaining gaps are maintained in [TASKBAR-PARITY.md](TASKBAR-PARITY.md). The baseline observations below retain their original source and native-test scope.
+
 Recorded 2026-10-23 for Lawand Taskbar 1.6.3. Lawand Taskbar is TaskPane's primary interaction reference. This ledger distinguishes vendor documentation, native observations, and TaskPane source inspection. None alone establishes TaskPane runtime parity.
 
 ## Officially documented

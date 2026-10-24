@@ -8,7 +8,7 @@ The main product priority is Lawand Taskbar-style window behavior and customizat
 
 ## In this alpha
 
-These features are implemented through source `4c169fb`, which passed the optimized release build, 41 tests in 3 suites and [GitHub CI](https://github.com/akashmahedy/TaskPane/actions/runs/40062127577). Controlled native checks on the creator's Mac passed user-assisted physical window and combined-group dragging, Focus Start with the launcher hidden, search/dismiss/reopen, its auto-hide transition, and the normal Start button and Escape. Original preferences were restored exactly. Broader inventory, Spaces/displays, pin dragging and full-screen/app-control acceptance remain pending. See [validation details](docs/VALIDATION.md); full reference parity is not claimed.
+The customization update adds shared numeric limits, linked sizing, optional previews, native Space membership, middle-click handling, badges, reversible overlap avoidance and explicit Dock controls. Source `d66aab4` passed **58 tests**, delegated review of **24 production files** and GitHub CI. The final native thumbnail and copied-backup restoration passed; the earlier accepted drag/Start baseline remains documented separately. See [the reference comparison and adjustment ranges](docs/TASKBAR-PARITY.md), [review](docs/REVIEW.md) and [validation](docs/VALIDATION.md) for the exact source and native coverage; full reference parity is not claimed.
 
 - Individual verified window buttons, with an adjacent mode that keeps each app's windows together without combining them. Explicit options can combine windows into app buttons always or when space is needed.
 - Activate, minimize, restore, close and full-screen controls, focused-window indicators, and app pin/unpin, hide, normal quit and exclusion commands.
@@ -16,11 +16,17 @@ These features are implemented through source `4c169fb`, which passed the optimi
 - Start popover anchored to the invoked taskbar, with search, an alphabetical app list, a pinned-app grid and recent apps from the current session.
 - Persistent pins and app exclusions; saved application, section and pin ordering.
 - Taskbar, menu bar, or combined mode; bottom/top/left/right edges and optional bars on all displays.
-- Auto-hide, per-display filtering and separate controls for minimized, off-screen and dialog windows.
+- Configurable hide/reveal timing, activation-strip size and animation; per-display hiding and filtering; minimized, off-screen and dialog controls.
+- Optional window hover snapshots with configurable delay, dimensions and title font. An explicit Screen Recording permission button is required; captures stay in a bounded memory cache.
+- Native current-Space membership via a checked read-only compatibility adapter, with visibility fallback when unavailable. Windows assigned to all known desktops can be marked.
+- Independent window/pin drag switches, focused-click hide-app alternative, optional middle-click close, hidden/minimized indicators and optional Dock badges.
+- Opt-in overlap avoidance restores original geometry when disabled or quitting if the exact window and last applied geometry remain verifiable. User edits are preserved.
+- Explicit macOS Dock edge/auto-hide Apply and Restore, with original-value backup and conflict detection. No Dock setting changes on launch.
 - Native CPU, memory, primary-interface network, internal-battery and clock widgets.
 - Per-widget placement: taskbar, menu bar, both, or off. CPU/memory sparklines in the taskbar.
 - System/light/dark appearance, accent color, bar transparency, icon/text sizes and item background opacity.
-- Fixed/adaptive item widths, minimum/maximum width, item height, spacing, corner radii and density shortcuts.
+- Linked 50–250% scale plus fixed/adaptive widths24–1,200pt, item heights20–240pt, icons8–128pt, text8–48pt and opacity0–100%; direct numeric input, padding, borders, shadow, spacing and density shortcuts.
+- Adjustable Start width/height, app icon and font size; menu dimensions fit the invoking display.
 - Bar length, edge distance, alignment and position offset; section ordering, automatic application/title/recent sorting and manual application ordering.
 - Five presets: Balanced, Windows style, Compact, Monitoring and Focus. Each has its own illustrated preview. Applying a preset preserves pins and exclusions. Fresh installations start with Windows style.
 - Automatic local preferences, versioned JSON export/import, strict validation and atomic writes.
@@ -48,11 +54,11 @@ Diagnostics sample for seven seconds and print metrics and counts, not window ti
 
 ## Window access
 
-App activation works without Accessibility. Use **Overview → Enable window control**, then explicitly allow TaskPane in macOS Privacy & Security, to operate individual windows. TaskPane does not edit the permission database or alter Dock settings.
+App activation works without Accessibility. Use **Overview → Enable window control**, then explicitly allow TaskPane in macOS Privacy & Security, to operate individual windows. TaskPane does not edit the permission database. Dock changes require their own explicit Apply action in More controls.
 
-Window rows come from public Accessibility window lists, with duplicate AX elements removed and helper/floating windows excluded. Core Graphics supplies visibility hints only. Actions retain an exact AX element and recheck its owner and membership in a fresh application window list; titles and positions never identify action targets. If verification fails, no action is sent. Without Accessibility, the bar provides application switching instead of individual window rows.
+Window rows come from public Accessibility window lists, with duplicate AX elements removed and helper/floating windows excluded. Core Graphics supplies visibility hints. An optional dynamically checked compatibility adapter reads native window IDs and Space membership; these are metadata only and never action identities. Actions retain an exact AX element and recheck its owner and membership in a fresh application window list; titles and positions never identify action targets. If verification fails, no action is sent. Without Accessibility, the bar provides application switching instead of individual window rows.
 
-Apps with incomplete Accessibility support, slow AX responses, nonstandard windows and some full-screen/other-Space windows may be omitted or refuse actions. Visibility is best effort. Minimized windows can be shown; off-screen windows and dialogs are hidden by default. TaskPane does not extract browser tabs as separate windows.
+Apps with incomplete Accessibility support, slow AX responses, nonstandard windows and some full-screen/other-Space windows may be omitted or refuse actions. Space membership falls back to visibility when a native query is unavailable; complete discovery of every off-Space or inactive-tab window is not established. Minimized windows can be shown; off-screen windows and dialogs are hidden by default. TaskPane does not extract browser tabs as separate windows.
 
 Under load, previously verified row details can be reused for up to 12 seconds, provided the exact window is still in a freshly retrieved AX window list. A complete list that no longer contains the window removes it. Every window action performs its own fresh verification.
 
@@ -70,8 +76,8 @@ The `--data-dir /absolute/test/folder` argument isolates preference storage for 
 
 ## Current limits
 
-- No window thumbnails, live previews, screen recording, snapping, saved window layouts, global shortcuts, fan control, or GPU/temperature/SMART collectors yet.
-- Display filtering uses window geometry. Exact active-Space filtering/moving is not implemented; the taskbar follows Spaces and uses best-effort on-screen hints. Enabling off-screen windows can include other Spaces.
+- No continuous live recording, snapping, saved window layouts, global shortcuts, fan control, or GPU/temperature/SMART collectors yet. Hover previews are still snapshots, not a video stream.
+- Display filtering uses window geometry. Native Space membership is read-only and depends on macOS compatibility; automatic Space assignment/moving and complete inactive-tab discovery are not implemented. Enabling off-screen windows includes all discovered Spaces.
 - The baseline collectors share one engine and currently sample while TaskPane runs, even when a widget is hidden. Demand-based per-collector scheduling is planned.
 - Network speed follows the primary routed interface, with a physical-interface fallback for VPNs; it is not a sum of all adapters. No public-IP request or connectivity probe is made.
 - Menu bar widgets are combined into one item. Graphs are available in taskbar CPU/memory widgets; menu bar values are text.

@@ -6,6 +6,27 @@ This file records actual validation separately from planned coverage. Latest nat
 
 Swift 6 / Swift 5 language mode, macOS 14 deployment target. Local runtime target: Apple Silicon, macOS 27.0.1. No Intel or macOS 14 runtime result is claimed.
 
+## Customization and feature update — `d66aab4`
+
+Source: `d66aab40136809ba837678990508fbaba15ab363`. The optimized release build, strict ad-hoc signature, **58 tests in 6 suites**, and [CI run 40067061148](https://github.com/akashmahedy/TaskPane/actions/runs/40067061148) passed. Release executable SHA-256: `90c4611bd32880bc07ed69f8dcf2c56fb5ff17b3f676941731a152bccf633ad3`. Delegated review covered **24/24** unique production files with **0** skipped and no remaining confirmed findings; four test files and the documentation were reviewed manually.
+
+Core checks cover legacy/partial advanced-preference decoding, every custom option in backups, expanded boundaries, linked scaling, four-edge geometry, display clamping, overlap geometry and Space/visibility admission. A harness executing the real overlap service with injected reads/writes passed **10/10** restoration/failure cases. These are service checks, not physical window-resize acceptance.
+
+Controlled native checks on the creator's Mac:
+
+- Linked 150% scale changed the native bar to 75 pt; the independent icon-only width control accepted 200 pt. These checks ran on `0a5cdc1`; those sizing paths are unchanged in the final source.
+- A 640 pt Start menu with 16 pt app text opened from an auto-hidden bar; TextEdit search and Escape dismissal passed on `8097e2e`. Its menu/controller paths are unchanged in the final source.
+- Two connected displays each received a bar. Hidden panels stayed within their owning display with no adjacent-display spill. macOS reported a 6 pt native strip for a requested 5 pt strip; this does not establish exact 1 pt minimum support. These controller checks ran on `8097e2e`.
+- The user explicitly approved Screen Recording for TaskPane. Only TaskPane's relevant records were registered/renewed through System Settings. Final `d66aab4` reported Accessibility **Connected** and Screen Recording **available** after restart.
+- Final `d66aab4` produced a real ScreenCaptureKit thumbnail of an existing disposable TextEdit document through the accessible Preview window action. The preview exposed Activate, Minimize and Close controls. Preview minimize retained the item and taskbar restore cleared its minimized state on `8097e2e`, whose preview/action source is unchanged. A later control recheck ended when the transient popover dismissed; clean global foreground focus and physical pointer-hover acceptance are not claimed.
+- A real GUI export/import round trip retained advanced settings. Native testing found copied JSON backups classified as plain text were disabled by the picker. After the final picker fix, the original copied backup imported successfully through the validated confirmation flow. Every saved preference then matched the pre-test snapshot exactly, including the original preview-off setup.
+
+A read-only native Space probe observed two displays, two active Spaces, two ordinary desktop IDs, and native IDs/membership for both TextEdit fixtures in approximately 59 ms. This establishes local metadata availability, not Space-switch acceptance or complete off-Space discovery. The pre-test preference snapshot SHA-256 is `1f2945aecf1b3b65b550b0ed22d4f140c6c85330ece02b3a0a61f0b9184093e6`.
+
+Remaining native coverage includes physical hover timing/pointer transitions, middle-click, badge availability, opt-in overlap resizing/restoration, Dock Apply/Restore, standard tabs, Space/full-screen transitions and wider app/OS/display coverage. Standard inactive-tab task discovery, Space assignment and complete Dock hiding are implementation gaps tracked in [the reference comparison](TASKBAR-PARITY.md). Full reference parity is not established.
+
+Private package verification: the running-path app, packaged app and ZIP-extracted app have the same release executable above; all three strict signatures passed. ZIP SHA-256: `6b259b4a24d9edd397dc8bb7491cfb488f27dd895cc034fb009d9e3836e0444b`. The previous app/folder/ZIP were preserved, and no public binary release was uploaded.
+
 ## Latest native drag and Start acceptance — `4c169fb`
 
 Application source: `4c169fb2451dc2f9e5da35ceeedc7413ca444d74`. The optimized release build, **41 tests in 3 suites**, strict ad-hoc signatures and [CI run 40062127577](https://github.com/akashmahedy/TaskPane/actions/runs/40062127577) passed. The final drag follow-up OCR review covered **1 selected file, 1 reviewed, 0 skipped, 100% coverage, no confirmed findings**; the earlier ordering/Start fix review covered all three selected production files.
