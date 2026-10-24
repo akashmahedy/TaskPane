@@ -1,12 +1,27 @@
 # Private-alpha validation
 
-This file records actual validation separately from planned coverage. Latest local pass: 2026-10-23.
+This file records actual validation separately from planned coverage. Latest native follow-up: 2026-10-24.
 
 ## Build target
 
 Swift 6 / Swift 5 language mode, macOS 14 deployment target. Local runtime target: Apple Silicon, macOS 27.0.1. No Intel or macOS 14 runtime result is claimed.
 
-## Latest bug-fix follow-up — `8815aa4`
+## Latest native drag and Start acceptance — `4c169fb`
+
+Application source: `4c169fb2451dc2f9e5da35ceeedc7413ca444d74`. The optimized release build, **41 tests in 3 suites**, strict ad-hoc signatures and [CI run 40062127577](https://github.com/akashmahedy/TaskPane/actions/runs/40062127577) passed. The final drag follow-up OCR review covered **1 selected file, 1 reviewed, 0 skipped, 100% coverage, no confirmed findings**; the earlier ordering/Start fix review covered all three selected production files.
+
+Release executable SHA-256: `dbb670573384b0a021c4de05f537efcd5981a3cbd8e85fd4872fb264521c92f9`. App, packaged app and extracted ZIP executables match and all three strict signature checks passed. Private ZIP SHA-256: `9912269ed5c0da4b8e86bcf5dfe2b84d9bd6b253f68ec730b56b29fa85a77057`. The previous local app/package remain preserved. No public binary release was uploaded.
+
+Controlled native acceptance on 2026-10-24:
+
+- TaskPane showed **Connected** after renewing only its own Accessibility entry. The user performed a physical individual-window drag and confirmed a drag preview and System Settings moving first. Independent AX readback showed System Settings, Finder and the two disposable TextEdit windows; the saved application order still reflected the older setup, establishing a separate session order.
+- Combining windows preserved System Settings → Finder → TextEdit. The user physically dropped the last TextEdit group onto Finder. Independent AX readback then showed System Settings → TextEdit → Finder, with all four windows preserved (1/2/1). Saved preferences matched that order, retained dormant Calendar and kept automatic ordering off. Arrange no longer exposed Reset individual window order, confirming that the stale session order was cleared.
+- Repeated Focus with the launcher hidden: context Start opened, TextEdit search worked, Close and context reopening worked, and Escape dismissed it. With the pointer outside, the bar stayed expanded while Start was open and retracted 31 points after dismissal. Exact five-point visible-strip geometry is not claimed.
+- Restored the 2026-10-24 pre-test backup through the validated Import flow. Every preference matched the snapshot, including appearance, widgets, pins, exclusions and ordering. The restored visible Start button, TextEdit search and Escape also passed.
+
+The borderless-panel coordinate drag API returned `noWindowsAvailable`, so physical inputs were user-assisted; acceptance combines the user's report with independent GUI and preference readback. This accepts the controlled individual-window/combined-drag and Start regression cases. Pin dragging, every movement direction, adjacent-block drags across apps, filtering/Space transitions, broader app/display coverage and full-screen/app commands remain separate acceptance work.
+
+## Earlier two-fix follow-up — `8815aa4`
 
 Application source: `8815aa4893dae4875da554600d4ba51cbe6b4608`. The optimized release build, strict ad-hoc signature verification and **41 tests in 3 suites** passed. [CI run 39965872433](https://github.com/akashmahedy/TaskPane/actions/runs/39965872433) passed. Final OCR delegation covered 3/3 selected production files, with no skipped files or confirmed remaining findings; the regression test was reviewed separately.
 
@@ -19,7 +34,9 @@ Native checks on the creator's Mac, using one connected display:
 - Restored the pre-test preferences through the app's validated Import flow. A private comparison confirmed every preference matched the snapshot, including appearance, widgets, pins, exclusions and ordering.
 - The restored visible Start button opened its popover; TextEdit search and Escape dismissal worked.
 
-Combined reorder's native acceptance remains pending. This rebuilt ad-hoc app does not yet have working Accessibility access, despite the older switch appearing enabled. Renewal of that existing permission awaits the user's specific approval. No broad permission reset or permission-database edit was performed. The regression test and source review pass, but they do not establish a native drag/drop result.
+On 2026-10-24, the user's approved permission renewal was completed for TaskPane only. The stale record required Apple's per-app Accessibility reset and GUI re-registration of the same unchanged bundle. TaskPane then showed **Connected** and 13 windows. No other app permission was changed and no direct permission-database edits were performed.
+
+A controlled bar contained two disposable TextEdit windows, one Finder window and one System Settings window. Three native Move earlier commands established a session order with System Settings first; Arrange exposed Reset individual window order, confirming that the session order existed. Switching to Combine into app buttons preserved System Settings → TextEdit → Finder, with counts 1/2/1. This is the regression precondition. The automation drag API returned `noWindowsAvailable` for the borderless panel. The subsequent user attempt failed without a drag preview; the corrected build and successful physical acceptance are recorded above.
 
 ## Earlier behavior follow-up — `7a7d0b8`
 
@@ -67,4 +84,4 @@ The public Workspace broker and exact AX focus readback were exercised in these 
 
 ## Unverified scenarios
 
-Broader inventory continuity, renamed/hidden windows, physical drag/right-click input, physical display unplug/replug, real sleep/wake, Intel hardware, every supported macOS version, other third-party app window implementations and exhaustive Spaces/full-screen behavior require later testing. Full-screen, hide and normal-quit execution and the user's final manual check remain unaccepted. A newly discovered minimized dialog without prior verified standard-window identity remains filtered when dialog display is disabled. Native actions deliberately refuse ambiguous matches.
+Broader inventory continuity, renamed/hidden windows, pin dragging and additional drag directions, physical display unplug/replug, real sleep/wake, Intel hardware, every supported macOS version, other third-party app window implementations and exhaustive Spaces/full-screen behavior require later testing. Full-screen, hide and normal-quit execution remain unaccepted; the controlled drag and Start checks above have passed. A newly discovered minimized dialog without prior verified standard-window identity remains filtered when dialog display is disabled. Native actions deliberately refuse ambiguous matches.
